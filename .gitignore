@@ -3,6 +3,7 @@
 
 # Log file
 *.log
+logs/
 
 # Package
 *.jar
@@ -21,7 +22,7 @@ target/
 .classpath
 .factorypath
 .project
-.settings
+.settings/
 .springBeans
 .sts4-cache
 
@@ -35,6 +36,26 @@ out/
 # VS Code
 .vscode/
 
-# OS generated
+# OS generated & Temp
 .DS_Store
 Thumbs.db
+[Dd]esktop.ini
+tmp/
+temp/
+.tmp/
+.temp/
+scratch/
+.scratch/
+scratchpad/
+.scratchpad/
+sandbox/
+.sandbox/
+
+# Local sensitive config
+**/application-local*.yml
+**/application-local*.yaml
+!**/application-local.example.yml
+!**/application-local.example.yaml
+.env
+.env.*
+!.env.example

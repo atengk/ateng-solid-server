@@ -1,0 +1,52 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ateng-solid-server
+  profiles:
+    active: dev
+  config:
+    import: "optional:classpath:application-local.yml"
+  threads:
+    virtual:
+      enabled: true
+  jackson:
+    time-zone: GMT+8
+    date-format: yyyy-MM-dd HH:mm:ss
+  flyway:
+    enabled: false
+    locations:
+      - classpath:db/migration/system
+    validate-on-migrate: true
+    out-of-order: false
+
+ateng:
+  boot:
+    web:
+      enum:
+        enabled: true
+        path-prefix: /admin/system/enums
+        scan-packages:
+          - io.github.atengk.solid
+    satoken:
+      primary-login-type: admin
+      same-token:
+        enabled: false
+      interceptor:
+        enabled: true
+        check-login: true
+        login-type-routes:
+          admin:
+            - /admin/**
+    mybatis-plus:
+      tenant:
+        enabled: true
+        column: tenant_id
+        ignore-tables:
+          - sys_tenant
+          - sys_tenant_package
+          - sys_menu
+          - sys_dict_type
+          - sys_dict_data
+          - flyway_schema_history

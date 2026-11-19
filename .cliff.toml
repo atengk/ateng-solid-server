@@ -1,0 +1,55 @@
+# ==============================================================================
+# git-cliff 自动化变更日志配置 (ateng-solid-server)
+# ==============================================================================
+
+[remote.github]
+owner = "atengk"
+repo = "ateng-solid-server"
+
+[changelog]
+header = ""
+body = """
+{% for entry in commits | commit_groups(groups=commit_parsers_groups) %}
+### {{ entry.group | trim }}
+{% for commit in entry.commits %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{{ commit.message | upper_first }}\
+  {% if commit.remote.pr_number %} in #{{ commit.remote.pr_number }}{% endif %}\
+  {% if commit.remote.username %} by @{{ commit.remote.username }}{% endif %}\
+  {% if not commit.remote.pr_number %} ({{ commit.id | truncate(length=7, end="") }}){% endif %}\
+{% endfor %}
+{% endfor %}
+{% if github.contributors | filter(attribute="is_first_time", value=true) | length != 0 %}
+### 🎉 新贡献者致谢 (New Contributors)
+{% for contributor in github.contributors | filter(attribute="is_first_time", value=true) %}
+- 感谢 @{{ contributor.username }} 提交的首次贡献！
+{% endfor %}
+{% endif %}\n
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+
+commit_parsers = [
+  { message = "^chore\\(release\\):", skip = true },
+  { message = "^Merge pull request|^Merge branch", skip = true },
+  { message = "^.*!:|BREAKING CHANGE", group = "💥 破坏性更新 (Breaking Changes)" },
+  { message = "^feat", group = "🚀 新特性 (Features)" },
+  { message = "^fix", group = "🐛 缺陷修复 (Bug Fixes)" },
+  { message = "^perf", group = "⚡ 性能优化 (Performance)" },
+  { message = "^refactor", group = "🚜 代码重构 (Refactor)" },
+  { message = "^docs", group = "📝 文档变动 (Documentation)" },
+  { message = "^style", group = "🎨 代码格式 (Style)" },
+  { message = "^test", group = "🧪 测试相关 (Tests)" },
+  { message = "^build", group = "📦 构建与依赖 (Build)" },
+  { message = "^ci", group = "👷 持续集成 (CI)" },
+  { message = "^chore", group = "🧹 杂项维护 (Chore)" },
+  { message = "^revert", group = "⏪ 代码回滚 (Revert)" },
+  { body = ".*", group = "💼 其他变更 (Other)" },
+]
+
+protect_breaking_commits = false
+filter_commits = false
+tag_pattern = "v?[0-9].*"

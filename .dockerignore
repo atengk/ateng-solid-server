@@ -1,0 +1,37 @@
+# ==============================================================================
+# Docker 构建上下文忽略清单 (ateng-solid-server)
+# ==============================================================================
+
+.git
+.github
+.githooks
+.agents
+scripts
+docs
+.cliff.toml
+.gitignore
+.dockerignore
+.editorconfig
+.gitattributes
+
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+tmp
+temp
+scratch
+.scratch
+
+*.log
+logs
+**/application-local*.yml
+**/application-local*.yaml
+.env
+.env.*
+!.env.example
+
+target/
+*.jar
+*.war
+*.class

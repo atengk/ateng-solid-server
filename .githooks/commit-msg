@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Conventional Commits 本地提交通用规范校验钩子
+#
+# @author Ateng
+# @since 2026-11-18
+# ==============================================================================
+
+set -eo pipefail
+
+MSG_FILE="$1"
+
+if [ ! -f "$MSG_FILE" ]; then
+  exit 0
+fi
+
+FIRST_LINE=$(grep -v '^#' "$MSG_FILE" | head -n 1 | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+if [ -z "$FIRST_LINE" ]; then
+  exit 0
+fi
+
+# 自动放行 Merge、Revert 与变基临时提交
+if echo "$FIRST_LINE" | grep -Eq '^(Merge (branch|tag|remote-tracking branch|pull request)|Revert |(fixup|squash)!)'; then
+  exit 0
+fi
+
+CONVENTIONAL_REGEX="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9._-]+\))?!?: .+$"
+
+if ! echo "$FIRST_LINE" | grep -Eq "$CONVENTIONAL_REGEX"; then
+  if [ -t 1 ]; then
+    COLOR_RESET="\033[0m"
+    COLOR_BOLD="\033[1m"
+    COLOR_RED="\033[31m"
+    COLOR_YELLOW="\033[33m"
+    COLOR_CYAN="\033[36m"
+  else
+    COLOR_RESET=""
+    COLOR_BOLD=""
+    COLOR_RED=""
+    COLOR_YELLOW=""
+    COLOR_CYAN=""
+  fi
+
+  printf "\n%b[ERROR] 提交信息不符合 Conventional Commits 规范！%b\n" "${COLOR_RED}" "${COLOR_RESET}"
+  printf "当前提交信息: %b\"%s\"%b\n\n" "${COLOR_BOLD}" "$FIRST_LINE" "${COLOR_RESET}"
+  printf "%b规范格式:%b <type>(<scope>): <subject>\n" "${COLOR_YELLOW}" "${COLOR_RESET}"
+  printf "%b支持类型:%b feat | fix | docs | style | refactor | perf | test | build | ci | chore | revert\n" "${COLOR_YELLOW}" "${COLOR_RESET}"
+  printf "%b参考示例:%b\n" "${COLOR_YELLOW}" "${COLOR_RESET}"
+  printf "  feat(contracts): 补充多租户契约字段定义\n"
+  printf "  fix(workspace): 修复子仓钩子初始化判断\n"
+  printf "  docs: 完善架构决策索引\n\n"
+  printf "💡 %b建议运行规范提交助手:%b %bbash scripts/commit.sh%b\n\n" "${COLOR_CYAN}" "${COLOR_RESET}" "${COLOR_BOLD}" "${COLOR_RESET}"
+  exit 1
+fi
+
+exit 0

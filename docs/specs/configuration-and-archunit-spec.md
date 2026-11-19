@@ -1,0 +1,53 @@
+# 工程配置基线与 ArchUnit 架构守卫规格 (configuration-and-archunit-spec.md)
+
+> **适用范围**：`ateng-solid-server` Maven 依赖管理、多环境 YAML 配置规范及测试期架构红线校验。
+
+---
+
+## 1. Maven POM 依赖边界与版本基线
+
+- **无父 POM 锁死**：根 `pom.xml` 不继承外部 `spring-boot-starter-parent`，通过 `<dependencyManagement>` 顺序导入：
+  1. `io.github.atengk:ateng-boot-bom`（**当前基线 `1.2.0`，待上游 `#1076~#1080` 发布后升级至最新正式版**）；
+  2. `org.springframework.boot:spring-boot-dependencies:3.3.13`。
+  > **并存期 BOM 顺序铁律**：未来在同仓新增 `cloud-*` 启动壳引入 `ateng-cloud-bom` 时，**必须保证 `ateng-boot-bom` 声明在 `ateng-cloud-bom` 之前**，防止传递 BOM 覆写高版本 `ateng-boot`。
+- **5 模块编译期依赖锁死矩阵**：
+
+| 模块 | 允许依赖的内部模块 | 允许依赖的外部/底座 Starter | 绝对禁令 |
+| :--- | :--- | :--- | :--- |
+| `ateng-solid-common` | 无 | `ateng-boot-core`、`jakarta.validation-api`、`lombok` | 禁 Web / MyBatis-Plus / Redis / Cloud |
+| `ateng-solid-system-api` | `common` | `jakarta.validation-api`、`lombok` | 禁 Web / MyBatis-Plus / Redis / Feign / Dubbo / Entity |
+| `ateng-solid-system` | `common`、`system-api` | `ateng-boot-{web,mybatis-plus,redis,satoken,excel,storage}` | 禁 `ateng-boot-all`、`ateng-cloud-*`、禁反向依赖 `auth` |
+| `ateng-solid-auth` | `common`、`system-api` | `ateng-boot-{web,redis,satoken}` | 禁依赖 `ateng-solid-system` 与任何持久层依赖 |
+| `ateng-solid-bootstrap` | `auth`、`system` | `ateng-boot-{flyway,observability}`、MySQL/H2、Test/ArchUnit | 禁编写业务 Controller / Service / Mapper |
+
+---
+
+## 2. 多环境双模配置文件约定 (`ateng-solid-bootstrap`)
+
+| 文件 | 是否入库 | 用途与关键基线配置 |
+| :--- | :---: | :--- |
+| `application.yml` | 是 | 全局公共基线：虚拟线程 `spring.threads.virtual.enabled=true`、Jackson 时区与长整型转字符串、MyBatis-Plus 多租户忽略表、Sa-Token `primary-login-type=admin`、`/admin/system/enums` 枚举端点、`spring.config.import: optional:classpath:application-local.yml` |
+| `application-dev.yml` | 是 | 本地开发 Profile：默认日志级别与调试友好参数，**严禁含真实库密码** |
+| `application-test.yml` | 是 | 离线测试 Profile：H2 `MODE=MySQL` 内存库、Flyway 兼容开关、关闭强依赖外部 Redis，保障 `mvn test` 100% 离线自洽 |
+| `application-local.example.yml` | 是 | 脱敏占位符模板（`YOUR_DB_HOST` / `YOUR_DB_PASSWORD` / `YOUR_REDIS_PASSWORD`） |
+| `application-local.yml` | **否（`.gitignore`）** | 开发者本地覆盖文件，存放真实云端 MySQL / Redis 连接凭据 |
+
+### 业务扩展配置收口 (`ateng.solid.*`)
+- 统一使用 `@ConfigurationProperties(prefix = "ateng.solid.*")` 强类型绑定（时间用 `Duration`，容量用 `DataSize`）；
+- **严禁**在 `@Service` / `@Component` / `@RestController` 上使用 `@RefreshScope` 或零散 `@Value`。
+
+---
+
+## 3. ArchUnit 自动化架构红线 (`ArchitectureGuardTest`)
+
+所有规则在 `ateng-solid-bootstrap` 的离线单元测试套件中强制执行（CI 必过）：
+
+1. **模块物理边界守卫**：
+   - `..solid.auth..` 包中的任何类 **严禁** 访问 `..solid.system..`（仅允许访问 `..solid.system.api..` 与 `..solid.common..`）；
+   - `..solid.system.api..` 包中的任何类 **严禁** 访问 Spring Web (`org.springframework.web..`)、MyBatis-Plus (`com.baomidou..`)、OpenFeign (`org.springframework.cloud.openfeign..`) 或 Dubbo (`org.apache.dubbo..`)。
+2. **现代 Java 21 依赖注入守卫**：
+   - 全仓库业务类 **严禁** 在字段上使用 `@Autowired` 或 `@Resource`（强制构造器注入 / `@RequiredArgsConstructor`）。
+3. **Controller 零 Entity 泄漏守卫**：
+   - 标注 `@RestController` / `@Controller` 的所有公开方法参数与返回值（含泛型参数）**严禁**出现 `..entity..` 包中的持久化实体类。
+4. **启动模块纯净守卫**：
+   - `ateng-solid-bootstrap` 根装配包不承载业务 `*Mapper` 或业务 `@RestController`。

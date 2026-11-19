@@ -1,0 +1,18 @@
+# ==============================================================================
+# 本地敏感环境配置模板（请复制为 application-local.yml 后填写，严禁提交真实凭据）
+# ==============================================================================
+
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${SOLID_DB_HOST:YOUR_DB_HOST}:${SOLID_DB_PORT:3306}/${SOLID_DB_NAME:ateng_solid}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false
+    username: ${SOLID_DB_USERNAME:YOUR_DB_USERNAME}
+    password: ${SOLID_DB_PASSWORD:YOUR_DB_PASSWORD}
+  data:
+    redis:
+      host: ${SOLID_REDIS_HOST:YOUR_REDIS_HOST}
+      port: ${SOLID_REDIS_PORT:6379}
+      password: ${SOLID_REDIS_PASSWORD:YOUR_REDIS_PASSWORD}
+      database: ${SOLID_REDIS_DATABASE:0}
+  flyway:
+    enabled: true

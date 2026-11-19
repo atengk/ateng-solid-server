@@ -1,0 +1,13 @@
+# ==============================================================================
+# GitHub Issues 治理配置 (ateng-solid-server)
+# ==============================================================================
+
+blank_issues_enabled: false
+
+contact_links:
+  - name: 💬 技术答疑与设计讨论 (GitHub Discussions)
+    url: https://github.com/atengk/ateng-solid-server/discussions
+    about: 请在此讨论后端接口、多租户、数据权限或 Cloud 演进问题。
+  - name: 📖 后端服务文档 (Documentation)
+    url: https://github.com/atengk/ateng-solid-server#readme
+    about: 查阅 5 模块拓扑、运行基线与离线测试说明。

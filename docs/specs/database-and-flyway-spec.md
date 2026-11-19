@@ -1,0 +1,64 @@
+# 数据库建模与 Flyway 迁移规范 (database-and-flyway-spec.md)
+
+> **适用范围**：`ateng-solid-server` 全库 DDL 设计、实体映射与 Flyway 迁移脚本编写。
+
+---
+
+## 1. 全局命名与字段类型铁律
+
+1. **字符集与引擎（MySQL 8.x）**：统一使用 `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`；H2 测试脚本需保持标准兼容（`MODE=MySQL`）。
+2. **表与索引命名**：
+   - 全小写蛇形命名；系统域核心表统一 `sys_` 前缀；
+   - 主键 `id BIGINT NOT NULL`（64 位雪花主键 `IdType.ASSIGN_ID`）；
+   - 普通索引 `idx_<列名>`；防软删冲突联合唯一索引 `uk_<业务列>_deleted`。
+3. **公共基类列映射（对齐 `ateng-boot-mybatis-plus`）**：
+   - **`BaseDeleteIdEntity` 表必填审计与锁列**：
+     - `create_by VARCHAR(64) NOT NULL DEFAULT 'SYSTEM'`
+     - `create_time DATETIME NOT NULL`
+     - `update_by VARCHAR(64) NOT NULL DEFAULT 'SYSTEM'`
+     - `update_time DATETIME NOT NULL`
+     - `version INT NOT NULL DEFAULT 0`
+     - `deleted BIGINT NOT NULL DEFAULT 0`（软删除由 MyBatis-Plus `@TableLogic(value="0", delval="id")` 回填自身 `id`）
+   - **多租户隔离表追加列**：`tenant_id BIGINT NOT NULL DEFAULT 0`（平台默认租户 ID `0`）。
+   - **零物理外键**：严禁使用 `FOREIGN KEY` 或级联外键约束。
+
+---
+
+## 2. 首期核心表清单与域归属
+
+### 2.1 平台共享表（列入 `ignore-tables`，不走行级租户过滤）
+| 表名 | 继承基类 | 核心字段与唯一索引约定 |
+| :--- | :--- | :--- |
+| `sys_tenant` | `BaseDeleteIdEntity` | `id`（默认租户为 `0`）、`tenant_code`（唯一索引 `(tenant_code, deleted)`，默认 `'000000'`）、`tenant_name`、`package_id`、`expire_time`、`account_count`、`status` |
+| `sys_tenant_package` | `BaseDeleteIdEntity` | `package_name`（唯一索引 `(package_name, deleted)`）、`menu_ids` 或关联表、`status` |
+| `sys_tenant_package_menu` | 轻量关联表 | `(package_id, menu_id)` 联合主键或独立主键 |
+| `sys_menu` | `BaseDeleteIdEntity` | `parent_id`、`menu_type` (`M`/`C`/`F`)、`title`、`name`、`path`、`component`、`redirect`、`perms`、`icon`、`sort`、`visible`、`status`、`keep_alive`、`is_external` |
+| `sys_dict_type` | `BaseDeleteIdEntity` | `dict_name`、`dict_type`（唯一索引 `(dict_type, deleted)`）、`status` |
+| `sys_dict_data` | `BaseDeleteIdEntity` | `dict_type`、`dict_label`、`dict_value`、`tag_type`、`css_class`、`sort`、`is_default`、`status` |
+
+### 2.2 租户隔离表（强制行级 `tenant_id` 过滤）
+| 表名 | 继承基类 | 核心字段与唯一索引约定 |
+| :--- | :--- | :--- |
+| `sys_dept` | `BaseDeleteIdEntity` | `tenant_id`、`parent_id`、`ancestors`（逗号分隔祖先路径，如 `0,100`）、`dept_name`、`sort`、`leader_user_id`、`phone`、`email`、`status` |
+| `sys_post` | `BaseDeleteIdEntity` | `tenant_id`、`post_code`（唯一索引 `(tenant_id, post_code, deleted)`）、`post_name`、`sort`、`status` |
+| `sys_role` | `BaseDeleteIdEntity` | `tenant_id`、`role_name`、`role_key`（唯一索引 `(tenant_id, role_key, deleted)`，**禁止普通租户使用 `super_admin`/`admin`**）、`data_scope`、`sort`、`status` |
+| `sys_user` | `BaseDeleteIdEntity` | `tenant_id`、`dept_id`、`username`（唯一索引 `(tenant_id, username, deleted)`）、`nickname`、`password`（PBKDF2 慢哈希）、`email`、`phone`、`gender`、`avatar`、`status`、`login_ip`、`login_date` |
+| `sys_config` | `BaseDeleteIdEntity` | `tenant_id`、`config_name`、`config_key`（唯一索引 `(tenant_id, config_key, deleted)`）、`config_value`、`config_type` |
+| `sys_user_role` / `sys_user_post` / `sys_role_menu` / `sys_role_dept` | 关联表 | 承载多对多绑定关系，不跨模块关联 |
+| `sys_oper_log` | `BaseIdEntity` | `tenant_id`、`trace_id`、`user_id`、`user_name`、`module`、`operate_type`、`request_method`、`request_url`、`client_ip`、`operate_location`、`request_params`、`response_result`、`status`、`cost_time`、`error_msg`、`extra_json`、`operate_time` |
+| `sys_login_log` | `BaseIdEntity` | `tenant_id`、`trace_id`、`username`、`login_type`、`client_ip`、`login_location`、`browser`、`os`、`status`、`msg`、`login_time` |
+
+---
+
+## 3. Flyway 迁移与双模配置规范
+
+1. **目录与版本命名（兼容单体全量建表与微服务按域并存分库）**：
+   - 首期仅 `system` 拥有持久化表（`auth` **零自建持久化表**），脚本按域目录内聚于 `db/migration/system/`（当前置于 `ateng-solid-bootstrap/src/main/resources/db/migration/system/` 或由各领域模块资源目录提供，由装配层统一或按域挂载 `spring.flyway.locations`）；
+   - 命名遵循 `V<主>.<次>.<补丁>__<域>_<语义描述>.sql`（如 `V1.0.0__system_init_schema.sql`、`V1.0.1__system_init_seed.sql`）；后续新增带库表的新业务服务域时，须按独立子目录与互不冲突的表前缀/独立 `flyway.table` 隔离；
+   - 已发布或合入 `dev`/`main` 的历史脚本**严禁修改内容**，任何字段变更必须追加新版本脚本。
+2. **H2 与 MySQL 双模兼容写作约定**：
+   - 避免使用 H2 `MODE=MySQL` 不支持的 MySQL 专属语法（如 `ON UPDATE CURRENT_TIMESTAMP`、自定义存储过程、特殊字符集前缀语法）；时间字段由 MyBatis-Plus `DefaultMetaObjectHandler` 统一填充；
+   - 初始化默认租户 `id = 0`、`tenant_code = '000000'` 与默认平台超管用户（初始密码在测试/开发文档说明并在首次部署建议修改，严禁在文档/脚本注释写生产真实口令）。
+3. **`ateng-boot-flyway` 安全配置**：
+   - 保持 `validate-on-migrate: true`、`out-of-order: false`；
+   - 生产 Profile 严禁开启 `clean`（由 `ateng-boot-flyway` `ProductionSafetyGuard` 自动熔断保护）。
