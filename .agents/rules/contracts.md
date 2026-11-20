@@ -1,7 +1,12 @@
+---
+trigger: always_on
+description: "ateng-solid 全端跨端通信协议、统一响应信封、错误码段、雪花主键、多租户、权限码与导入导出数据契约唯一真源"
+---
+
 # 跨端通信协议与数据契约规范 (contracts.md)
 
 > **作用域**：全端前后端数据交互、接口联调及跨终端边界设计。
-> **唯一真源声明**：本文件主源维护于根仓库 `ateng-solid/.agents/rules/contracts.md`，各子仓库 `.agents/rules/contracts.md` 副本由 `bash scripts/workspace.sh sync-contracts` 单向同步，禁止在子仓库直接修改副本造成协议漂移。
+> **唯一真源声明**：本文件主源维护于根仓库 `ateng-solid/.agents/rules/contracts.md`，各子仓库 `.agents/rules/contracts.md` 副本由 `bash scripts/workspace.sh sync-rules` 单向同步，禁止在子仓库直接修改副本造成协议漂移。
 
 ---
 
@@ -42,9 +47,10 @@
 ## 3. 序列化、雪花主键与多租户数据规范
 
 - **64 位雪花主键**：后端主外键统一采用 64 位 `Long`（`IdType.ASSIGN_ID`），Jackson 序列化阶段输出为字符串；前端业务模型中所有主外键 ID **统一声明为 `string`**，严禁使用 `number` 承接雪花 ID。
-- **多租户主键 `tenant_id` 与编码 `tenant_code`**：
-  - 全库业务/组织/配置表的 `tenant_id` 统一为 **`BIGINT NOT NULL DEFAULT 0`**（内置平台默认租户 ID 为 `0`，新建租户采用雪花 ID）；对外 JSON 与请求头 `X-Tenant-Id` 按雪花规范统一传字符串（默认租户传 `"0"`），与 `ateng-boot` `DefaultTenantLineHandler`（纯数字解析为 `LongValue`）100% 原生契合。
-  - `000000` 固定作为平台内置默认租户的业务编码 `tenant_code`（存储于 `sys_tenant.tenant_code`），用于登录入口展示或租户编码检索。
+- **多租户开关、主键 `tenant_id` 与编码 `tenant_code`**：
+  - **可开关、默认关闭**：系统支持通过配置开关（`ateng.solid.tenant.enabled`，**默认 `false`**，联动 `ateng.boot.mybatis-plus.tenant.enabled`）启停多租户隔离；关闭时固定以平台默认租户 `0`（`000000`）运行，前端依据登录前置接口返回的 `tenantEnabled` 开关自动隐藏登录页租户输入框、顶栏租户切换器及租户/套餐管理菜单。
+  - 全库业务/组织/配置表及租户内多对多关联表（`sys_user_role`/`sys_user_post`/`sys_role_menu`/`sys_role_dept`）的 `tenant_id` 统一为 **`BIGINT NOT NULL DEFAULT 0`**（内置平台默认租户 ID 为 `0`，新建租户采用雪花 ID）；对外 JSON 与请求头 `X-Tenant-Id` 按雪花规范统一传字符串（默认租户传 `"0"`），与 `ateng-boot` `DefaultTenantLineHandler`（纯数字解析为 `LongValue`）100% 原生契合。
+  - `000000` 固定作为平台内置默认租户的业务编码 `tenant_code`（存储于 `sys_tenant.tenant_code`），用于多租户开启时登录入口展示或租户编码检索。
 - **时间与金额格式**：时间字段统一为 `yyyy-MM-dd HH:mm:ss` 字符串；金额字段使用后端 `BigDecimal` 平铺输出（禁用科学计数法），前端使用 `@atengk/core` 金融精度工具处理。
 - **内存真明文与渲染脱敏**：除后端明确要求仅作脱敏展示的字段外，接口与前端状态层保持真明文流转；存储加密收敛于后端 `@FieldEncrypt`，展示掩码统一收敛于 `@Sensitive` / `@ExcelSensitive` 或前端渲染层 `formatMask*`。
 
@@ -77,4 +83,4 @@
   - 代码中强类型不可运营变更的状态枚举（如启用/停用、操作类型、数据范围类型）实现 `IBaseEnum`，后端通过 `ateng-boot-web` `EnumDictionaryController` 统一挂载于 **`/admin/system/enums`** 暴露只读选项字典；
   - 需后台运营配置、增删改的业务字典（如性别、岗位类别、通知类型等）统一走数据库 `sys_dict_type` / `sys_dict_data`，前端统一经 `@atengk/element-plus` `DictManager` 缓存消费。
 - **文件下载与 Blob 双态异常嗅探**：前端发起文件下载或导出（`responseType: 'blob'`）时，若服务端返回业务报错帧（`Content-Type: application/json`），客户端拦截器前置读取并转译为 `BusinessException` 提示，禁止生成损坏假文件。
-- **Excel 流式导入导出（Apache Fesod）**：导出统一通过 `ateng-boot-excel` 流式输出（支持 `@ExcelSensitive` 脱敏）；批量导入若发生行级校验失败，按 Fesod 批注回写协议返回带错误批注的 Excel 文件或结构化行号明细，由前端 `AtengExcelFeedback` 承接提示与下载修正。
+- **Excel 流式导入导出（Apache Fesod）**：导出统一通过 `ateng-boot-excel` 流式输出（支持 `@ExcelSensitive` 脱敏）；批量导入采用**整批原子校验 + JSON 明细 + 临时批注文件下载**协议——存在行级校验失败时整批不入库，后端通过 `ExcelFeedbackUtil` 生成标红批注 `.xlsx` 暂存（短 TTL 且校验操作人及租户归属），导入接口统一返回 `Result<ImportResultVO>`（含 `totalCount`/`successCount`/`failCount`/`errors[]`/`feedbackToken`），由前端 `AtengExcelFeedback` 弹窗展示错误明细并按需通过独立下载端点拉取标红批注文件。

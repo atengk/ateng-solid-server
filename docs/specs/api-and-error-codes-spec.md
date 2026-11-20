@@ -9,7 +9,7 @@
 
 | 端点 | 方法 | 鉴权 | 核心请求模型 | 核心响应模型 (`Result<T>`) | 说明 |
 | :--- | :---: | :---: | :--- | :--- | :--- |
-| `/admin/auth/captcha` | `GET` | `@Anonymous` | 无 | `CaptchaVO` (`enabled`, `captchaKey`, `imageBase64`) | 复用 `CaptchaTemplate`，由配置控制开关 |
+| `/admin/auth/captcha` | `GET` | `@Anonymous` | 无 | `CaptchaVO` (`enabled`, `tenantEnabled`, `captchaKey`, `imageBase64`) | 复用 `CaptchaTemplate`，同时透传 `tenantEnabled` 开关控制前端租户显隐 |
 | `/admin/auth/login` | `POST` | `@Anonymous` | `AdminLoginRequest` (`tenantCode`, `username`, `password`, `captchaKey`, `captchaCode`) | `AdminLoginVO` (`tokenName`, `tokenValue`, `expireIn`) | 校验租户、验证码、防爆破与 PBKDF2 口令，签发 `satoken-admin` |
 | `/admin/auth/logout` | `POST` | 登录态 | 无 | `Void` | 注销当前 `admin` 会话并发布登出审计事件 |
 | `/admin/auth/info` | `GET` | 登录态 | 无 | `AdminProfileVO` (`userId`, `tenantId`, `username`, `nickname`, `avatar`, `roles`, `permissions`) | 返回当前登录态身份与扁平权限码数组 |
@@ -25,10 +25,10 @@
 
 | 资源域 | 路径前缀 | 典型接口与权限码 | 核心说明 |
 | :--- | :--- | :--- | :--- |
-| **静态枚举** | `/admin/system/enums` | `GET /admin/system/enums`、`GET /admin/system/enums/{alias}` | 由 `ateng-boot-web` `EnumDictionaryController` 暴露 `IBaseEnum` |
-| **租户管理** | `/admin/system/tenant` | `GET /page` (`system:tenant:list`)、`GET /{id}`、`POST` (`create`)、`PUT` (`update`)、`DELETE /{ids}` (`delete`)、`PUT /{id}/status` | 仅平台默认租户（`tenantId = 0`）可见与维护；禁止删除租户 `0` |
-| **租户套餐** | `/admin/system/tenant-package` | `GET /page` (`system:tenant-package:list`)、`GET /options`、`POST`、`PUT`、`DELETE /{ids}` | 绑定允许分配的菜单集合边界 |
-| **用户管理** | `/admin/system/user` | `GET /page` (`system:user:list`)、`GET /{id}`、`POST`、`PUT`、`DELETE /{ids}`、`PUT /{id}/status`、`PUT /{id}/reset-password`、`POST /import` (`import`)、`POST /export` (`export`)、`POST /avatar` | 联动 `@DataScope`、Fesod Excel 批注导入导出与 `ateng-boot-storage` 头像存储 |
+| **静态枚举** | `/admin/system/enums` | `GET /admin/system/enums`、`GET /admin/system/enums/{alias}` | 由 `ateng-boot-web` `EnumDictionaryController` 暴露 `IBaseEnum`（受登录态保护） |
+| **租户管理** | `/admin/system/tenant` | `GET /page` (`system:tenant:list`)、`GET /{id}`、`POST` (`create`)、`PUT` (`update`)、`DELETE /{ids}` (`delete`)、`PUT /{id}/status` | 仅在开启多租户且平台默认租户（`tenantId = 0`）可见与维护；禁止删除租户 `0`；`account_count` 仅新增/启用用户时增量拦截 |
+| **租户套餐** | `/admin/system/tenant-package` | `GET /page` (`system:tenant-package:list`)、`GET /options`、`POST`、`PUT`、`DELETE /{ids}` | 仅平台租户 `0` 维护，禁止勾选平台专属菜单；缩减菜单时事务内联动裁剪关联租户角色越界菜单并刷新缓存 |
+| **用户管理** | `/admin/system/user` | `GET /page` (`system:user:list`)、`GET /{id}`、`POST`、`PUT`、`DELETE /{ids}`、`PUT /{id}/status`、`PUT /{id}/reset-password`、`POST /import` (`import`)、`GET /import/feedback/{feedbackToken}`、`POST /export` (`export`)、`POST /avatar` | 联动 `@DataScope`、Fesod 整批原子校验（`ImportResultVO` + 临时批注下载）与 `ateng-boot-storage` 头像存储 |
 | **角色管理** | `/admin/system/role` | `GET /page` (`system:role:list`)、`GET /options`、`GET /{id}`、`POST`、`PUT`、`DELETE /{ids}`、`PUT /{id}/data-scope` | 禁止普通租户创建 `super_admin`/`admin` 保留角色编码 |
 | **菜单管理** | `/admin/system/menu` | `GET /tree` (`system:menu:list`)、`GET /{id}`、`POST`、`PUT`、`DELETE /{id}` | `menuType` 仅限 `M`/`C`/`F`；删除前须校验无子菜单 |
 | **部门管理** | `/admin/system/dept` | `GET /tree` (`system:dept:list`)、`GET /{id}`、`POST`、`PUT`、`DELETE /{id}` | 维护 `ancestors` 祖级路径；删除前校验无子部门与关联用户 |

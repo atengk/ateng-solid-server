@@ -20,6 +20,11 @@
 | `ateng-solid-auth` | `common`、`system-api` | `ateng-boot-{web,redis,satoken}` | 禁依赖 `ateng-solid-system` 与任何持久层依赖 |
 | `ateng-solid-bootstrap` | `auth`、`system` | `ateng-boot-{flyway,observability}`、MySQL/H2、Test/ArchUnit | 禁编写业务 Controller / Service / Mapper |
 
+### 扩展模块可插拔装配约定 (`ateng-solid-ext-*` / `ateng-solid-biz-*`)
+- **只向内依赖**：扩展模块仅允许依赖 `ateng-solid-common`、`ateng-solid-system-api`（及自身业务所需的 `ateng-boot-*` Starter），**严禁依赖或篡改 `ateng-solid-system` / `ateng-solid-auth` 实现模块**；
+- **AutoConfiguration 插拔**：通过 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` + `@ConditionalOnProperty` 自注册 Bean，增减 `bootstrap` POM 依赖即可无侵入完成模块启停；
+- **白名单与枚举汇聚**：扩展模块通过实现 `SaTokenWhitelistProvider` 与 `@IBaseEnum` 自动接入安全防线和枚举端点，无需修改内核 YAML 配置。
+
 ---
 
 ## 2. 多环境双模配置文件约定 (`ateng-solid-bootstrap`)

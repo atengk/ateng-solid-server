@@ -8,7 +8,8 @@
 
 - **运行基线**：Java 21 LTS（启用虚拟线程 `spring.threads.virtual.enabled=true`）、Spring Boot `3.3.13`、Maven `3.9+`；基础坐标 `io.github.atengk`，基础包名 `io.github.atengk.solid.*`。
 - **BOM 统管与按需引入**：父 POM 通过 `<scope>import</scope>` 导入 `ateng-boot-bom`（`1.2.0`+），各业务模块按需引入具体 `ateng-boot-*` Starter（如 `core`、`web`、`mybatis-plus`、`redis`、`satoken`、`excel`、`storage`、`flyway`、`observability`）；**严禁**笼统依赖 `ateng-boot-all`，**单体业务模块禁止引入 `ateng-cloud-*` 运行时依赖**（未来并存微服务引入 `ateng-cloud-bom` 时须确保 `ateng-boot-bom` 声明在其之前）。
-- **底层缺口即停工硬门禁**：开发任何重要/基础设施级功能时，若 `ateng-boot` 或 `ateng-cloud` 不足或存在缺陷，**必须立即暂停该特性编码并向上游提交 Issue**，详见 [`.agents/rules/foundation-first-gate.md`](./.agents/rules/foundation-first-gate.md)。
+- **底层缺口即停工与零补丁硬门禁**：开发任何通用或基础设施级功能时，若 `ateng-boot` 或 `ateng-cloud` 不足或存在缺陷，**必须立即暂停该特性编码并向上游提交通用改造 Issue（严禁在上层写临时绕过/降级代码将就，严禁在底座硬编码本项目约定）**，待底座独立验收并发版后再恢复上层开发，详见 [`.agents/rules/foundation-first-gate.md`](./.agents/rules/foundation-first-gate.md)。
+- **三层扩展界限与装配期插拔（内核 vs `ext-*`/`biz-*`）**：通用技术能力沉入 `ateng-boot`/`ateng-cloud`；认证与通用系统治理保留于 `ateng-solid-{common,system-api,system,auth}` 最小稳定内核；扩展特性与行业二开（`ateng-solid-ext-*` / `biz-*`）采用装配期独立 Maven 模块 + `AutoConfiguration.imports` + 内核 SPI（`AuthGrantHandler`、`DomainEventPublisher`、`SaTokenWhitelistProvider`）+ 独立 Flyway 迁移，只依赖 `*-api` 与 `common`，严禁修改内核源码或向内核表直接加列（首期不建空模块）。
 - **零臃肿依赖**：严禁引入 `hutool-all`、`guava`、`commons-collections` 等重型工具包；通用原语优先使用 JDK 21 与 `ateng-boot-core`（`IdUtil`、`JsonUtil`、`PasswordUtil`、`DesensitizeUtil`、`BusinessAssert`、`ValidatorUtil`、`IBaseEnum`）。
 - **不强依赖 OpenAPI**：不将 `ateng-boot-openapi` 作为代码生成或联调前提，Controller/DTO/VO 手写清晰 Javadoc 并与前端契约 1:1 对齐。
 
@@ -65,6 +66,7 @@
 - **双模配置隔离**：云端 MySQL / Redis 凭据仅写入被 `.gitignore` 忽略的 `application-local.yml`（通过 `optional:classpath:application-local.yml` 挂载），仓库内仅提交大写占位符模板 `application-local.example.yml`。
 - **离线自洽单测铁律**：单测与集成测试默认依托 H2（`MODE=MySQL`）与 `ateng-boot` 内存降级 100% 离线跑通；修改上下文后必须在 `@AfterEach` 清理 `UserContextHolder`、`TenantContextHolder`、`DataPermissionContextHolder`、MDC；源码修改后须先通过 `mvn clean test -B -T 1C -nsu` 再汇报交付。
 - **双分支与安全暂存**：`main` 只读发布，`dev` 活跃开发；未获用户明确“提交/推送”指令前修改保留在工作区；暂存必须显式指定文件路径（严禁 `git add .` / `-A`），遵循 Conventional Commits（可通过 `bash scripts/commit.sh` 提交）。
+- **跨仓本地联调与版本守卫**：本地联调未发版的 `ateng-boot` / `ateng-cloud` 时，底座必须采用递增 `-SNAPSHOT`（如 `1.2.1-SNAPSHOT`）执行 `mvn install`（严禁覆写正式版号污染 `~/.m2`）；正式提交前必须锁回已发布的递进正式版，`.githooks/pre-commit` 自动拦截暂存区 `pom.xml` 中的底座 `-SNAPSHOT` 版本。
 - **文件注释与文档同步**：新建源码类标配中文 Javadoc、`@author Ateng`、`@since YYYY-MM-DD`；核心业务流程 >= 2 步才标 `// 1.` 步骤注释；新增 API/配置/错误码须同步更新对应文档与 `CONTEXT.md`。
 
 ---

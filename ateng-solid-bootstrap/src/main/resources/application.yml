@@ -33,6 +33,8 @@ ateng:
       primary-login-type: admin
       same-token:
         enabled: false
+      login-defense:
+        enabled: true
       interceptor:
         enabled: true
         check-login: true
@@ -40,13 +42,20 @@ ateng:
           admin:
             - /admin/**
     mybatis-plus:
-      tenant:
+      data-permission:
         enabled: true
+      tenant:
+        # 多租户默认关闭（首期极简单租户开箱运行）；开启时同步置 ateng.solid.tenant.enabled=true
+        enabled: false
         column: tenant_id
         ignore-tables:
           - sys_tenant
           - sys_tenant_package
+          - sys_tenant_package_menu
           - sys_menu
           - sys_dict_type
           - sys_dict_data
           - flyway_schema_history
+  solid:
+    tenant:
+      enabled: false

@@ -1,6 +1,6 @@
 # ateng-solid-server
 
-**ateng-solid-server** 是 **ateng-solid** 全端多端数字化系统的后端核心服务工程，基于 [`ateng-boot`](https://github.com/atengk/ateng-boot) (`1.2.0`+) 基础设施底座构建，采用 **5 模块 Cloud-Ready 单体架构**，支持未来平滑迁移或复制拆分为 [`ateng-cloud`](https://github.com/atengk/ateng-cloud) 微服务集群。
+**ateng-solid-server** 是 **ateng-solid** 全端开源上层框架的后端核心，基于独立通用的 [`ateng-boot`](https://github.com/atengk/ateng-boot) 基础设施底座构建，采用 **5 模块同源双装配（单体先行稳固 + 预留 [`ateng-cloud`](https://github.com/atengk/ateng-cloud) 并存挂壳）架构**。它既是验证并完善 `ateng-boot` / `ateng-cloud` 的实战工程，也为二开扩展行业业务模块（`biz-*`）提供纯净、零补丁的后端脚手架内核。
 
 ---
 

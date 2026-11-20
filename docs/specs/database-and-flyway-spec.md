@@ -44,7 +44,7 @@
 | `sys_role` | `BaseDeleteIdEntity` | `tenant_id`、`role_name`、`role_key`（唯一索引 `(tenant_id, role_key, deleted)`，**禁止普通租户使用 `super_admin`/`admin`**）、`data_scope`、`sort`、`status` |
 | `sys_user` | `BaseDeleteIdEntity` | `tenant_id`、`dept_id`、`username`（唯一索引 `(tenant_id, username, deleted)`）、`nickname`、`password`（PBKDF2 慢哈希）、`email`、`phone`、`gender`、`avatar`、`status`、`login_ip`、`login_date` |
 | `sys_config` | `BaseDeleteIdEntity` | `tenant_id`、`config_name`、`config_key`（唯一索引 `(tenant_id, config_key, deleted)`）、`config_value`、`config_type` |
-| `sys_user_role` / `sys_user_post` / `sys_role_menu` / `sys_role_dept` | 关联表 | 承载多对多绑定关系，不跨模块关联 |
+| `sys_user_role` / `sys_user_post` / `sys_role_menu` / `sys_role_dept` | 关联表 | 均携带 `tenant_id BIGINT NOT NULL DEFAULT 0` 随业务租户隔离，承载多对多绑定关系，不跨模块关联 |
 | `sys_oper_log` | `BaseIdEntity` | `tenant_id`、`trace_id`、`user_id`、`user_name`、`module`、`operate_type`、`request_method`、`request_url`、`client_ip`、`operate_location`、`request_params`、`response_result`、`status`、`cost_time`、`error_msg`、`extra_json`、`operate_time` |
 | `sys_login_log` | `BaseIdEntity` | `tenant_id`、`trace_id`、`username`、`login_type`、`client_ip`、`login_location`、`browser`、`os`、`status`、`msg`、`login_time` |
 
@@ -54,11 +54,12 @@
 
 1. **目录与版本命名（兼容单体全量建表与微服务按域并存分库）**：
    - 首期仅 `system` 拥有持久化表（`auth` **零自建持久化表**），脚本按域目录内聚于 `db/migration/system/`（当前置于 `ateng-solid-bootstrap/src/main/resources/db/migration/system/` 或由各领域模块资源目录提供，由装配层统一或按域挂载 `spring.flyway.locations`）；
-   - 命名遵循 `V<主>.<次>.<补丁>__<域>_<语义描述>.sql`（如 `V1.0.0__system_init_schema.sql`、`V1.0.1__system_init_seed.sql`）；后续新增带库表的新业务服务域时，须按独立子目录与互不冲突的表前缀/独立 `flyway.table` 隔离；
+   - 命名遵循 `V<主>.<次>.<补丁>__<域>_<语义描述>.sql`（如 `V1.0.0__system_init_schema.sql`、`V1.0.1__system_init_seed.sql`）；后续新增带库表的扩展模块（`ext-*` / `biz-*`）或独立业务服务域时，须自带 `classpath:db/migration/<module>/` 并配置独立迁移源与独立历史表（`table` 隔离），**严禁把扩展表混写进内核初始 SQL，严禁直接向内核主表加字段**（扩展字段统一建 `1:1` 子表关联）。
    - 已发布或合入 `dev`/`main` 的历史脚本**严禁修改内容**，任何字段变更必须追加新版本脚本。
-2. **H2 与 MySQL 双模兼容写作约定**：
+2. **H2 与 MySQL 双模兼容与安全初始化约定**：
    - 避免使用 H2 `MODE=MySQL` 不支持的 MySQL 专属语法（如 `ON UPDATE CURRENT_TIMESTAMP`、自定义存储过程、特殊字符集前缀语法）；时间字段由 MyBatis-Plus `DefaultMetaObjectHandler` 统一填充；
-   - 初始化默认租户 `id = 0`、`tenant_code = '000000'` 与默认平台超管用户（初始密码在测试/开发文档说明并在首次部署建议修改，严禁在文档/脚本注释写生产真实口令）。
+   - `V1.0.1__system_init_seed.sql` 仅初始化默认租户（`id = 0`、`tenant_code = '000000'`）、`super_admin` 角色、初始菜单与动态字典等非敏感元数据，**严禁在 SQL 脚本中硬编码超管密码哈希**；初始超管账号与 PBKDF2 口令由 `ateng-solid-bootstrap` 的启动引导器（`ApplicationRunner`）按 `ateng.solid.init.super-admin-password`（未配置则首次启动随机生成 16 位强口令并打印一次；`test` Profile 使用固定测试桩口令）动态写入；
+   - 多租户默认关闭（`ateng.solid.tenant.enabled=false`、`ateng.boot.mybatis-plus.tenant.enabled=false`），但全库表仍保留 `tenant_id BIGINT NOT NULL DEFAULT 0` 与租户表结构，开启即可零改表切换 SaaS 多租户。
 3. **`ateng-boot-flyway` 安全配置**：
    - 保持 `validate-on-migrate: true`、`out-of-order: false`；
    - 生产 Profile 严禁开启 `clean`（由 `ateng-boot-flyway` `ProductionSafetyGuard` 自动熔断保护）。

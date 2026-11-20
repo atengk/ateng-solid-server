@@ -1,3 +1,8 @@
+---
+trigger: always_on
+description: "ateng-solid-server 5 模块同源双装配（单体先行 + 预留 Cloud 并存扩展壳）架构边界与 ArchUnit 守护守则"
+---
+
 # Cloud-Readiness 同源双装配与并存硬边界守则 (cloud-readiness.md)
 
 > **作用域**：`ateng-solid-server` 全模块开发与代码评审。
