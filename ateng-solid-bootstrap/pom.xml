@@ -26,7 +26,7 @@
             <artifactId>ateng-solid-system</artifactId>
         </dependency>
 
-        <!-- 迁移与可观测底座 -->
+        <!-- 迁移底座 -->
         <!-- TODO(Ateng): ateng-boot-flyway 已在 ateng-boot dev 分支实现但尚未随 1.2.0 发布至 Maven Central，待 ateng-boot 1.2.1+ 正式发布后取消注释启用 -->
         <!--
         <dependency>
@@ -34,10 +34,6 @@
             <artifactId>ateng-boot-flyway</artifactId>
         </dependency>
         -->
-        <dependency>
-            <groupId>io.github.atengk</groupId>
-            <artifactId>ateng-boot-observability</artifactId>
-        </dependency>
 
         <!-- 数据库驱动 -->
         <dependency>

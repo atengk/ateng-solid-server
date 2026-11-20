@@ -21,9 +21,10 @@
    - `100000 ~ 100999`：`ateng-solid-common`（参数/幂等/限流/数据权限/文件处理）；
    - `101000 ~ 101999`：`ateng-solid-auth`（认证/验证码/锁定/会话）；
    - `102000 ~ 102999`：`ateng-solid-system-api`（租户/套餐/用户/角色/菜单/部门/岗位/字典/参数）。
-2. **持久层继承基类与防唯一键冲突模型**：
-   - 核心业务/组织/配置表继承 `BaseDeleteIdEntity`（`deleted BIGINT NOT NULL DEFAULT 0`，逻辑删除自动将 `deleted` 更新为自身雪花 `id`；含 `version INT DEFAULT 0`；`create_by`/`update_by` 为 `VARCHAR(64)`）；
-   - 审计流水表（`sys_oper_log`、`sys_login_log`）继承 `BaseIdEntity`；
+2. **持久层继承基类与防唯一键冲突模型（对齐 `ateng-boot#1134`）**：
+   - 核心业务/组织/配置表默认继承 **`BaseLogicEntity`**（`deleted BIGINT NOT NULL DEFAULT 0`，逻辑删除自动将 `deleted` 更新为自身雪花 `id`；**不强绑 `@Version` 乐观锁**；`create_by`/`update_by` 为 `VARCHAR(64)`）；
+   - 仅高并发状态防覆盖核心表按需继承 **`BaseFullEntity`**（在 `BaseLogicEntity` 基础上追加 `@Version Integer version`，初始默认值统一为 `0`）；
+   - 审计流水表（`sys_oper_log`、`sys_login_log`）与多对多关联表继承 **`BaseIdEntity`**；多租户隔离表统一实现 **`TenantAware<Long>`**；
    - 唯一索引统一命名为 `uk_<字段>_deleted`（如 `UNIQUE KEY uk_tenant_username_deleted (tenant_id, username, deleted)`）。
 3. **无物理外键与 `ateng-boot-flyway`**：
    - 全库表严禁创建 `FOREIGN KEY`，关联一致性由 Service 层与事务保证；

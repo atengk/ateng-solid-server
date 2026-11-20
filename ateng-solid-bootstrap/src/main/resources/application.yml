@@ -26,7 +26,8 @@ ateng:
     web:
       enum:
         enabled: true
-        path-prefix: /admin/system/enums
+        # 待升级 ateng-boot:1.2.1+ 后生效：关闭底座内置默认控制器，交由 system 模块 SysEnumController 接管 /admin/system/enums 路由与 @SaCheckLogin 鉴权
+        endpoint-enabled: false
         scan-packages:
           - io.github.atengk.solid
     satoken:

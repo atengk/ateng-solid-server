@@ -1,0 +1,39 @@
+# ateng-solid-server
+
+> `ateng-solid` 全端框架的后端核心服务（Java 21 虚拟线程 + Spring Boot 3.3 + `ateng-boot`），采用“5 模块单体先行稳固 + `ateng-cloud` 微服务长期同源共存”双装配架构，对外以对称前缀 `/admin/**` 提供强类型契约。
+
+## AI 编程助手必读约定 (Instructions for AI Agents)
+
+- **版本基线真源**：实际 Java、Spring Boot、`ateng-boot-bom` 及内部子模块坐标版本以 [父 POM](./pom.xml) 为准，严禁在此硬编码或擅自退回旧版。
+- **同源双装配硬边界**：
+  - `ateng-solid-system-api` 保持纯 Java 契约（零 Web / MyBatis-Plus / Redis / Feign / Dubbo 注解与 Entity），`Remote*Service` 统一返回裸 DTO/VO（禁 `Result<T>`）并在异常时抛 `BusinessException`；
+  - `ateng-solid-auth` 仅依赖 `common` 与 `system-api`，严禁依赖 `system` 实现包；
+  - Controller 显式返回 `Result<T>` / `PageResult<VO>` 并严禁泄漏 ORM `Entity`；全部业务注入强制构造器注入（`@RequiredArgsConstructor`）；Flyway 脚本随所属领域置入模块资源目录（如 `ateng-solid-system/src/main/resources/db/migration/system/`）。
+- **底座优先与 1:1 文档沉淀**：编码前核对 [底层缺口即停工规范](./.agents/rules/foundation-first-gate.md)；完成功能并通过 `mvn clean test -B -T 1C -nsu` 后，按 [文档 1:1 保真与模块规范](./docs/agents/documentation-specification.md) 逆向更新对应模块 `README.md`、Spec、`CONTEXT.md` 与本索引。
+
+## 全局规范与架构决策
+
+- [后端工程规范 AGENTS.md](./AGENTS.md): 5 模块边界、Java 21 并发、安全与交付自检清单
+- [后端模块拓扑 CONTEXT-MAP.md](./CONTEXT-MAP.md): 模块依赖关系与领域边界地图
+- [后端项目门面 README.md](./README.md): 工程定位、MVP 范围与双模测试入口
+- [后端 ADR 看板](./docs/adr/README.md): 5 模块双装配、6 位错误码与持久化基线、单体与 Cloud 共存方案
+- [同源双装配守则](./.agents/rules/cloud-readiness.md): `bootstrap` 与 `ateng-solid-cloud/*` 目录拓扑与六大并存接缝
+- [全仓代码与架构规范](./.agents/rules/coding-and-architecture.md): 公共提取、大类拆分审查阈值、设计模式选型与事务/空安全铁律
+- [跨端通信与数据契约](./.agents/rules/contracts.md): 统一响应、错误码段、`tenant_id BIGINT` 与三段式权限码
+- [底层缺口即停工规范](./.agents/rules/foundation-first-gate.md): 停工门禁与跨仓本地 `-SNAPSHOT` 联调 SOP
+- [文档 1:1 保真与模块规范](./docs/agents/documentation-specification.md): 应用五维文档结构与 10 项自检清单
+
+## 详细设计规格 (Specs)
+
+- [数据库建模与 Flyway 规范](./docs/specs/database-and-flyway-spec.md): 表清单、实体阶梯（`BaseLogicEntity`/`BaseFullEntity`/`BaseIdEntity` + `TenantAware<Long>`）与迁移约定
+- [认证、RBAC 与 `@DataScope` 规范](./docs/specs/auth-rbac-and-datascope-spec.md): `satoken-admin`、防爆破、多租户开关与 5 级数据权限
+- [管理端接口契约与错误码规范](./docs/specs/api-and-error-codes-spec.md): `/admin/auth/**`、`/admin/system/**`、自建枚举端点与 `100xxx/101xxx/102xxx` 错误码
+- [工程配置基线与 ArchUnit 规格](./docs/specs/configuration-and-archunit-spec.md): 模块依赖矩阵、双模配置与自动化架构守卫规则
+
+## 核心模块目录 (Core Modules)
+
+- [ateng-solid-common 文档](./ateng-solid-common/README.md) | [词汇表](./ateng-solid-common/CONTEXT.md): 全局常量、公共错误码（`100xxx`）、基础枚举与领域事件端口
+- [ateng-solid-system-api 文档](./ateng-solid-system-api/README.md) | [词汇表](./ateng-solid-system-api/CONTEXT.md): 纯 Java 跨模块 `Remote*Service` 契约、DTO/VO 与系统错误码（`102xxx`）
+- [ateng-solid-system 文档](./ateng-solid-system/README.md) | [词汇表](./ateng-solid-system/CONTEXT.md): 系统管理域业务实现（`/admin/system/**`）与 `db/migration/system/` 迁移脚本
+- [ateng-solid-auth 文档](./ateng-solid-auth/README.md) | [词汇表](./ateng-solid-auth/CONTEXT.md): 管理端认证与会话治理（`/admin/auth/**`，`101xxx`），零自建持久化表
+- [ateng-solid-bootstrap 文档](./ateng-solid-bootstrap/README.md) | [词汇表](./ateng-solid-bootstrap/CONTEXT.md): 单体聚合启动宿主、双模配置基线与 ArchUnit 架构守卫入口

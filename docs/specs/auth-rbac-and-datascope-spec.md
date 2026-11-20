@@ -61,4 +61,4 @@
 ## 4. 操作审计与静态枚举端点
 
 - **操作审计（`@OperateLog`）**：Controller 写操作方法标配 `@OperateLog(module = "...", operateType = OperateTypeEnum.XXX)`；在 `system` 模块实现 `OperateLogStorageProvider` SPI 将 `OperateLogModel`（含从请求解析写入 `extra` 的 `browser`/`os`）异步写入 `sys_oper_log`。
-- **静态枚举端点**：开启 `ateng.boot.web.enum.enabled=true`、`path-prefix=/admin/system/enums`、`scan-packages=io.github.atengk.solid`，保持受管理端登录态保护（不匿名开放），与动态字典 `sys_dict` 分工互补。
+- **静态枚举端点（上层自主接管）**：配置 `ateng.boot.web.enum.enabled=true`、`endpoint-enabled=false`（`ateng-boot#1094`）、`scan-packages=io.github.atengk.solid`，在 `ateng-solid-system` 自建 `SysEnumController` 注入 `EnumDictionaryRegistry` 暴露 `/admin/system/enums`（全量/单个/批量），标注 `@SaCheckLogin` 强制受管理端登录态保护并可按需扩展细粒度权限与租户过滤。

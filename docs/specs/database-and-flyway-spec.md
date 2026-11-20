@@ -11,15 +11,16 @@
    - 全小写蛇形命名；系统域核心表统一 `sys_` 前缀；
    - 主键 `id BIGINT NOT NULL`（64 位雪花主键 `IdType.ASSIGN_ID`）；
    - 普通索引 `idx_<列名>`；防软删冲突联合唯一索引 `uk_<业务列>_deleted`。
-3. **公共基类列映射（对齐 `ateng-boot-mybatis-plus`）**：
-   - **`BaseDeleteIdEntity` 表必填审计与锁列**：
+3. **公共基类列映射（对齐 `ateng-boot#1134` 重构体系）**：
+   - **`BaseLogicEntity` 表必填审计与软删列（常规主表默认首选，无强制乐观锁）**：
      - `create_by VARCHAR(64) NOT NULL DEFAULT 'SYSTEM'`
      - `create_time DATETIME NOT NULL`
      - `update_by VARCHAR(64) NOT NULL DEFAULT 'SYSTEM'`
      - `update_time DATETIME NOT NULL`
-     - `version INT NOT NULL DEFAULT 0`
      - `deleted BIGINT NOT NULL DEFAULT 0`（软删除由 MyBatis-Plus `@TableLogic(value="0", delval="id")` 回填自身 `id`）
-   - **多租户隔离表追加列**：`tenant_id BIGINT NOT NULL DEFAULT 0`（平台默认租户 ID `0`）。
+   - **`BaseFullEntity` 表追加乐观锁列（仅需并发 CAS 防覆盖表按需继承）**：
+     - `version INT NOT NULL DEFAULT 0`（与重构后的 `BatchUtil` 默认初始值 `0` 严格对齐）
+   - **多租户隔离表追加列**：`tenant_id BIGINT NOT NULL DEFAULT 0`（平台默认租户 ID `0`，实体实现 **`TenantAware<Long>`**）。
    - **零物理外键**：严禁使用 `FOREIGN KEY` 或级联外键约束。
 
 ---
@@ -29,22 +30,22 @@
 ### 2.1 平台共享表（列入 `ignore-tables`，不走行级租户过滤）
 | 表名 | 继承基类 | 核心字段与唯一索引约定 |
 | :--- | :--- | :--- |
-| `sys_tenant` | `BaseDeleteIdEntity` | `id`（默认租户为 `0`）、`tenant_code`（唯一索引 `(tenant_code, deleted)`，默认 `'000000'`）、`tenant_name`、`package_id`、`expire_time`、`account_count`、`status` |
-| `sys_tenant_package` | `BaseDeleteIdEntity` | `package_name`（唯一索引 `(package_name, deleted)`）、`menu_ids` 或关联表、`status` |
-| `sys_tenant_package_menu` | 轻量关联表 | `(package_id, menu_id)` 联合主键或独立主键 |
-| `sys_menu` | `BaseDeleteIdEntity` | `parent_id`、`menu_type` (`M`/`C`/`F`)、`title`、`name`、`path`、`component`、`redirect`、`perms`、`icon`、`sort`、`visible`、`status`、`keep_alive`、`is_external` |
-| `sys_dict_type` | `BaseDeleteIdEntity` | `dict_name`、`dict_type`（唯一索引 `(dict_type, deleted)`）、`status` |
-| `sys_dict_data` | `BaseDeleteIdEntity` | `dict_type`、`dict_label`、`dict_value`、`tag_type`、`css_class`、`sort`、`is_default`、`status` |
+| `sys_tenant` | `BaseLogicEntity` | `id`（默认租户为 `0`）、`tenant_code`（唯一索引 `(tenant_code, deleted)`，默认 `'000000'`）、`tenant_name`、`package_id`、`expire_time`、`account_count`、`status` |
+| `sys_tenant_package` | `BaseLogicEntity` | `package_name`（唯一索引 `(package_name, deleted)`）、`status` |
+| `sys_tenant_package_menu` | `BaseIdEntity` | `(package_id, menu_id)` 关联唯一键（无软删与审计冗余字段） |
+| `sys_menu` | `BaseLogicEntity` | `parent_id`、`menu_type` (`M`/`C`/`F`)、`title`、`name`、`path`、`component`、`redirect`、`perms`、`icon`、`sort`、`visible`、`status`、`keep_alive`、`is_external` |
+| `sys_dict_type` | `BaseLogicEntity` | `dict_name`、`dict_type`（唯一索引 `(dict_type, deleted)`）、`status` |
+| `sys_dict_data` | `BaseLogicEntity` | `dict_type`、`dict_label`、`dict_value`、`tag_type`、`css_class`、`sort`、`is_default`、`status` |
 
-### 2.2 租户隔离表（强制行级 `tenant_id` 过滤）
+### 2.2 租户隔离表（强制行级 `tenant_id` 过滤，实体实现 `TenantAware<Long>`）
 | 表名 | 继承基类 | 核心字段与唯一索引约定 |
 | :--- | :--- | :--- |
-| `sys_dept` | `BaseDeleteIdEntity` | `tenant_id`、`parent_id`、`ancestors`（逗号分隔祖先路径，如 `0,100`）、`dept_name`、`sort`、`leader_user_id`、`phone`、`email`、`status` |
-| `sys_post` | `BaseDeleteIdEntity` | `tenant_id`、`post_code`（唯一索引 `(tenant_id, post_code, deleted)`）、`post_name`、`sort`、`status` |
-| `sys_role` | `BaseDeleteIdEntity` | `tenant_id`、`role_name`、`role_key`（唯一索引 `(tenant_id, role_key, deleted)`，**禁止普通租户使用 `super_admin`/`admin`**）、`data_scope`、`sort`、`status` |
-| `sys_user` | `BaseDeleteIdEntity` | `tenant_id`、`dept_id`、`username`（唯一索引 `(tenant_id, username, deleted)`）、`nickname`、`password`（PBKDF2 慢哈希）、`email`、`phone`、`gender`、`avatar`、`status`、`login_ip`、`login_date` |
-| `sys_config` | `BaseDeleteIdEntity` | `tenant_id`、`config_name`、`config_key`（唯一索引 `(tenant_id, config_key, deleted)`）、`config_value`、`config_type` |
-| `sys_user_role` / `sys_user_post` / `sys_role_menu` / `sys_role_dept` | 关联表 | 均携带 `tenant_id BIGINT NOT NULL DEFAULT 0` 随业务租户隔离，承载多对多绑定关系，不跨模块关联 |
+| `sys_dept` | `BaseLogicEntity` | `tenant_id`、`parent_id`、`ancestors`（逗号分隔祖先路径，如 `0,100`）、`dept_name`、`sort`、`leader_user_id`、`phone`、`email`、`status` |
+| `sys_post` | `BaseLogicEntity` | `tenant_id`、`post_code`（唯一索引 `(tenant_id, post_code, deleted)`）、`post_name`、`sort`、`status` |
+| `sys_role` | `BaseLogicEntity` | `tenant_id`、`role_name`、`role_key`（唯一索引 `(tenant_id, role_key, deleted)`，**禁止普通租户使用 `super_admin`/`admin`**）、`data_scope`、`sort`、`status` |
+| `sys_user` | `BaseLogicEntity` | `tenant_id`、`dept_id`、`username`（唯一索引 `(tenant_id, username, deleted)`）、`nickname`、`password`（PBKDF2 慢哈希）、`email`、`phone`、`gender`、`avatar`、`status`、`login_ip`、`login_date` |
+| `sys_config` | `BaseLogicEntity` | `tenant_id`、`config_name`、`config_key`（唯一索引 `(tenant_id, config_key, deleted)`）、`config_value`、`config_type` |
+| `sys_user_role` / `sys_user_post` / `sys_role_menu` / `sys_role_dept` | `BaseIdEntity` | 均携带 `tenant_id BIGINT NOT NULL DEFAULT 0` 随业务租户隔离，承载多对多绑定关系，不跨模块关联 |
 | `sys_oper_log` | `BaseIdEntity` | `tenant_id`、`trace_id`、`user_id`、`user_name`、`module`、`operate_type`、`request_method`、`request_url`、`client_ip`、`operate_location`、`request_params`、`response_result`、`status`、`cost_time`、`error_msg`、`extra_json`、`operate_time` |
 | `sys_login_log` | `BaseIdEntity` | `tenant_id`、`trace_id`、`username`、`login_type`、`client_ip`、`login_location`、`browser`、`os`、`status`、`msg`、`login_time` |
 
@@ -53,7 +54,7 @@
 ## 3. Flyway 迁移与双模配置规范
 
 1. **目录与版本命名（兼容单体全量建表与微服务按域并存分库）**：
-   - 首期仅 `system` 拥有持久化表（`auth` **零自建持久化表**），脚本按域目录内聚于 `db/migration/system/`（当前置于 `ateng-solid-bootstrap/src/main/resources/db/migration/system/` 或由各领域模块资源目录提供，由装配层统一或按域挂载 `spring.flyway.locations`）；
+   - 首期仅 `system` 拥有持久化表（`auth` **零自建持久化表**），脚本**直接随领域置于 `ateng-solid-system/src/main/resources/db/migration/system/`**，保障单体 `ateng-solid-bootstrap` 与后续 `ateng-solid-cloud-system` 100% 共享同一份建表与种子脚本，由各自装配层挂载 `spring.flyway.locations`；
    - 命名遵循 `V<主>.<次>.<补丁>__<域>_<语义描述>.sql`（如 `V1.0.0__system_init_schema.sql`、`V1.0.1__system_init_seed.sql`）；后续新增带库表的扩展模块（`ext-*` / `biz-*`）或独立业务服务域时，须自带 `classpath:db/migration/<module>/` 并配置独立迁移源与独立历史表（`table` 隔离），**严禁把扩展表混写进内核初始 SQL，严禁直接向内核主表加字段**（扩展字段统一建 `1:1` 子表关联）。
    - 已发布或合入 `dev`/`main` 的历史脚本**严禁修改内容**，任何字段变更必须追加新版本脚本。
 2. **H2 与 MySQL 双模兼容与安全初始化约定**：

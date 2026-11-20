@@ -8,9 +8,9 @@
 
 - **[Common 公共基础底座](./ateng-solid-common/CONTEXT.md)**（`ateng-solid-common`）：全局常量、公共错误码（`100000~100999`）、基础通用枚举（`IBaseEnum`）、上下文辅助工具与跨端通用基础模型，零业务逻辑与持久层依赖。
 - **[System API 系统域契约层](./ateng-solid-system-api/CONTEXT.md)**（`ateng-solid-system-api`）：系统管理域对外纯 Java 契约接口（`RemoteUserService`、`RemoteTenantService`、`RemotePermissionService`、`RemoteAuditLogService`）、跨模块 DTO/VO 与系统域错误码（`102000~102999`）；严禁引入 Web/MyBatis/Entity 依赖。
-- **[System 系统管理域](./ateng-solid-system/CONTEXT.md)**（`ateng-solid-system`）：租户与套餐、用户、角色、菜单、部门、岗位、动态字典、系统参数与登录/操作日志的完整后端实现，挂载 `/admin/system/**` 接口并实现 `system-api` 契约。
+- **[System 系统管理域](./ateng-solid-system/CONTEXT.md)**（`ateng-solid-system`）：租户与套餐、用户、角色、菜单、部门、岗位、动态字典、系统参数、枚举管控与登录/操作日志的完整后端实现，挂载 `/admin/system/**` 接口、持有 `db/migration/system/` 迁移脚本并实现 `system-api` 契约。
 - **[Auth 认证与会话中心](./ateng-solid-auth/CONTEXT.md)**（`ateng-solid-auth`）：管理端认证登录、图形验证码、防爆破锁定、密码校验、个人中心与在线会话强退（`/admin/auth/**`、`loginType="admin"`、`satoken-admin`），错误码段 `101000~101999`；只消费 `system-api` 与 `common`。
-- **[Bootstrap 单体装配与迁移中心](./ateng-solid-bootstrap/CONTEXT.md)**（`ateng-solid-bootstrap`）：Spring Boot 主启动入口、全局配置文件（`application*.yml`）、Flyway 版本化数据库迁移脚本及全局拦截器/切面/ArchUnit 架构守卫集成点。
+- **[Bootstrap 单体装配中心](./ateng-solid-bootstrap/CONTEXT.md)**（`ateng-solid-bootstrap`）：单体聚合主启动入口、全局配置文件（`application*.yml`）及跨模块本地事件与 ArchUnit 架构守卫集成点，与后续同仓 `ateng-solid-cloud/*` 微服务启动壳长期并存。
 
 ---
 

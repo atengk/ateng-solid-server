@@ -80,7 +80,7 @@ description: "ateng-solid 全端跨端通信协议、统一响应信封、错误
 ## 5. 枚举字典、文件传输与 Excel 双向协议
 
 - **静态枚举 vs 动态字典分工**：
-  - 代码中强类型不可运营变更的状态枚举（如启用/停用、操作类型、数据范围类型）实现 `IBaseEnum`，后端通过 `ateng-boot-web` `EnumDictionaryController` 统一挂载于 **`/admin/system/enums`** 暴露只读选项字典；
+  - 代码中强类型不可运营变更的状态枚举（如启用/停用、操作类型、数据范围类型）实现 `IBaseEnum`；后端显式配置 `ateng.boot.web.enum.endpoint-enabled=false` 关闭底座内置端点，仅复用 `EnumDictionaryRegistry` 扫描缓存，由上层 `ateng-solid-system` 自建控制器挂载于 **`/admin/system/enums`** 暴露只读选项字典并统一实施鉴权管控（默认 `@SaCheckLogin` 管理端登录态校验，按需可扩展权限/租户裁剪）；
   - 需后台运营配置、增删改的业务字典（如性别、岗位类别、通知类型等）统一走数据库 `sys_dict_type` / `sys_dict_data`，前端统一经 `@atengk/element-plus` `DictManager` 缓存消费。
 - **文件下载与 Blob 双态异常嗅探**：前端发起文件下载或导出（`responseType: 'blob'`）时，若服务端返回业务报错帧（`Content-Type: application/json`），客户端拦截器前置读取并转译为 `BusinessException` 提示，禁止生成损坏假文件。
 - **Excel 流式导入导出（Apache Fesod）**：导出统一通过 `ateng-boot-excel` 流式输出（支持 `@ExcelSensitive` 脱敏）；批量导入采用**整批原子校验 + JSON 明细 + 临时批注文件下载**协议——存在行级校验失败时整批不入库，后端通过 `ExcelFeedbackUtil` 生成标红批注 `.xlsx` 暂存（短 TTL 且校验操作人及租户归属），导入接口统一返回 `Result<ImportResultVO>`（含 `totalCount`/`successCount`/`failCount`/`errors[]`/`feedbackToken`），由前端 `AtengExcelFeedback` 弹窗展示错误明细并按需通过独立下载端点拉取标红批注文件。

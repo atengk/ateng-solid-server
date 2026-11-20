@@ -1,16 +1,16 @@
 # ateng-solid-server 后端工程规范 (AGENTS.md)
 
-本文件为 `ateng-solid-server` 独立仓库的完整自洽研发规范，同时配合公共同步规约 [`.agents/rules/contracts.md`](./.agents/rules/contracts.md)、[`.agents/rules/foundation-first-gate.md`](./.agents/rules/foundation-first-gate.md) 与同源双装配守则 [`.agents/rules/cloud-readiness.md`](./.agents/rules/cloud-readiness.md) 生效。单开本子仓即可独立完成研发、测试与交付。
+本文件为 `ateng-solid-server` 独立仓库的完整自洽研发规范，同时配合公共同步规约 [`.agents/rules/contracts.md`](./.agents/rules/contracts.md)、[`.agents/rules/foundation-first-gate.md`](./.agents/rules/foundation-first-gate.md)、[`.agents/rules/coding-and-architecture.md`](./.agents/rules/coding-and-architecture.md) 与同源双装配守则 [`.agents/rules/cloud-readiness.md`](./.agents/rules/cloud-readiness.md) 生效。单开本子仓即可独立完成研发、测试与交付。
 
 ---
 
 ## 1. 技术基线与依赖规范
 
 - **运行基线**：Java 21 LTS（启用虚拟线程 `spring.threads.virtual.enabled=true`）、Spring Boot `3.3.13`、Maven `3.9+`；基础坐标 `io.github.atengk`，基础包名 `io.github.atengk.solid.*`。
-- **BOM 统管与按需引入**：父 POM 通过 `<scope>import</scope>` 导入 `ateng-boot-bom`（`1.2.0`+），各业务模块按需引入具体 `ateng-boot-*` Starter（如 `core`、`web`、`mybatis-plus`、`redis`、`satoken`、`excel`、`storage`、`flyway`、`observability`）；**严禁**笼统依赖 `ateng-boot-all`，**单体业务模块禁止引入 `ateng-cloud-*` 运行时依赖**（未来并存微服务引入 `ateng-cloud-bom` 时须确保 `ateng-boot-bom` 声明在其之前）。
+- **BOM 统管与按需引入**：父 POM 通过 `<scope>import</scope>` 导入 `ateng-boot-bom`（`1.2.1+` 待发版锁版），各业务模块按需引入首期核心 `ateng-boot-*` Starter（`core`、`web`、`mybatis-plus`、`redis`、`satoken`、`excel`、`storage`、`flyway`）；**严禁**笼统依赖 `ateng-boot-all` 或在首期引入 `ateng-boot-observability` 等非核心增强包，**单体业务模块禁止引入 `ateng-cloud-*` 运行时依赖**（未来并存微服务引入 `ateng-cloud-bom` 时须确保 `ateng-boot-bom` 声明在其之前）。
 - **底层缺口即停工与零补丁硬门禁**：开发任何通用或基础设施级功能时，若 `ateng-boot` 或 `ateng-cloud` 不足或存在缺陷，**必须立即暂停该特性编码并向上游提交通用改造 Issue（严禁在上层写临时绕过/降级代码将就，严禁在底座硬编码本项目约定）**，待底座独立验收并发版后再恢复上层开发，详见 [`.agents/rules/foundation-first-gate.md`](./.agents/rules/foundation-first-gate.md)。
 - **三层扩展界限与装配期插拔（内核 vs `ext-*`/`biz-*`）**：通用技术能力沉入 `ateng-boot`/`ateng-cloud`；认证与通用系统治理保留于 `ateng-solid-{common,system-api,system,auth}` 最小稳定内核；扩展特性与行业二开（`ateng-solid-ext-*` / `biz-*`）采用装配期独立 Maven 模块 + `AutoConfiguration.imports` + 内核 SPI（`AuthGrantHandler`、`DomainEventPublisher`、`SaTokenWhitelistProvider`）+ 独立 Flyway 迁移，只依赖 `*-api` 与 `common`，严禁修改内核源码或向内核表直接加列（首期不建空模块）。
-- **零臃肿依赖**：严禁引入 `hutool-all`、`guava`、`commons-collections` 等重型工具包；通用原语优先使用 JDK 21 与 `ateng-boot-core`（`IdUtil`、`JsonUtil`、`PasswordUtil`、`DesensitizeUtil`、`BusinessAssert`、`ValidatorUtil`、`IBaseEnum`）。
+- **零臃肿依赖与对象映射**：严禁引入 `hutool-all`、`guava`、`commons-collections` 等重型工具包；通用原语优先使用 JDK 21 与 `ateng-boot-core`（`IdUtil`、`JsonUtil`、`PasswordUtil`、`DesensitizeUtil`、`BusinessAssert`、`ValidatorUtil`、`IBaseEnum`、`BeanUtil`）。对象模型转换使用 `BeanUtil` 或显式静态工厂方法（首期不引入 `MapStruct`/`MapStruct-Plus`），修改接口严禁无过滤覆盖 `id`/`tenantId`/`password`/`version`/`deleted` 等受管字段。
 - **不强依赖 OpenAPI**：不将 `ateng-boot-openapi` 作为代码生成或联调前提，Controller/DTO/VO 手写清晰 Javadoc 并与前端契约 1:1 对齐。
 
 ---
@@ -23,7 +23,7 @@
 2. **`ateng-solid-system-api`**（仅依赖 `common`）：**纯 Java 对外契约层**（`RemoteUserService`、`RemoteTenantService`、`RemotePermissionService`、`RemoteAuditLogService` 等接口、跨模块 DTO/VO、系统域枚举与错误码 `102xxx`），**绝对禁止依赖 Spring Web、MyBatis-Plus、Redis、持久层 Entity 或 `@FeignClient`/`@Dubbo*` 注解**；方法统一**直接返回裸 DTO/VO（禁返回 `Result<T>`）并在异常时直接 `throw new BusinessException(...)`**，以保证单体直调、Dubbo Triple RPC（并存默认首选）与 Feign 自适应解包三者语义 100% 一致。
 3. **`ateng-solid-system`**（依赖 `common`、`system-api`）：实现 `*-api` 契约接口，内聚 `sys_*` 的 Controller（`/admin/system/**`）、Service、Mapper、Entity。
 4. **`ateng-solid-auth`**（**仅依赖 `common` 与 `system-api`，严禁依赖 `system` 实现包**）：认证中心（`/admin/auth/**`）、验证码、登录防爆破、会话与在线用户治理，错误码段 `101xxx`。
-5. **`ateng-solid-bootstrap`**：单体聚合启动入口、`application*.yml`、Flyway 迁移脚本与跨模块事件装配。
+5. **`ateng-solid-bootstrap`**：单体聚合启动入口、`application*.yml` 与跨模块事件/ArchUnit 守卫装配。
 
 ### 跨模块硬边界（面向 `ateng-cloud` + ArchUnit 守卫）
 - 严禁跨模块注入对方的 `Mapper` 或执行跨模块业务表 SQL JOIN；
@@ -42,15 +42,16 @@
 - **单例无状态与时间 API**：`@Service`/`@Component`/`@RestController` 保持无状态；全量使用 `java.time.*`（严禁 `java.util.Date`、`Calendar`），全量使用 `jakarta.*`（严禁 `javax.*`）。
 
 ### 3.2 持久层实体阶梯、多租户与唯一键防冲突
-- **实体基类与审计列**：
-  - 核心业务/组织/配置表继承 **`BaseDeleteIdEntity`**（`deleted BIGINT DEFAULT 0`，软删动态回填主键 `id`；含 `@Version Integer version` 乐观锁；`createBy`/`updateBy` 为 `String`，DDL 为 `VARCHAR(64)`）；
-  - 流水日志表（`sys_oper_log`、`sys_login_log`）继承 **`BaseIdEntity`**（无软删与乐观锁）。
+- **实体基类与审计列（对齐 `ateng-boot#1134` 重构模型）**：
+  - 常规业务/组织/配置表继承 **`BaseLogicEntity`**（`deleted BIGINT DEFAULT 0`，软删动态回填主键 `id`；**无 `@Version` 乐观锁**；`createBy`/`updateBy` 为 `String`，DDL 为 `VARCHAR(64)`）；
+  - 仅高并发状态防覆盖核心表按需继承 **`BaseFullEntity`**（在 `BaseLogicEntity` 基础上追加 `@Version Integer version` 默认 `0`）；
+  - 流水日志表（`sys_oper_log`、`sys_login_log`）及关联表继承 **`BaseIdEntity`**（无软删与乐观锁）。
   - 联合唯一索引标准：`(tenant_id, biz_key, deleted)`（平台共享表为 `(biz_key, deleted)`），彻底避免软删重建报 Duplicate Key。
 - **行级多租户（`BIGINT` 对齐 `ateng-boot`）**：
-  - 租户隔离表统一携带 `tenant_id BIGINT NOT NULL DEFAULT 0`（平台默认租户 ID 为 `0`，业务编码 `tenant_code = '000000'`，与 `DefaultTenantLineHandler` 原生 `LongValue(0)` 完美匹配）；
+  - 租户隔离表统一携带 `tenant_id BIGINT NOT NULL DEFAULT 0` 并实现 **`TenantAware<Long>`**（平台默认租户 ID 为 `0`，业务编码 `tenant_code = '000000'`，与 `DefaultTenantLineHandler` 原生 `LongValue(0)` 完美匹配）；
   - 平台免过滤白名单（`ignore-tables`）：`sys_tenant`、`sys_tenant_package`、`sys_menu`、`sys_dict_type`、`sys_dict_data`、`flyway_schema_history`。
   - 仅允许租户 `0` 且具备 `super_admin` 身份的超管受控通过 `X-Tenant-Id` 切换视角；普通用户强制锁定会话归属租户。
-- **Schema 版本化迁移**：采用 `ateng-boot-flyway`（内置生产 `clean` 硬熔断与初始化顺序屏障），脚本按域目录内聚于 `db/migration/system/`（首期置于 `ateng-solid-bootstrap/src/main/resources/db/migration/system/`，并预留多域独立 `locations` 与独立 `flyway.table` 扩展口子）。
+- **Schema 版本化迁移**：采用 `ateng-boot-flyway`（内置生产 `clean` 硬熔断与初始化顺序屏障），脚本随所属领域内聚于 **`ateng-solid-system/src/main/resources/db/migration/system/`**（保障单体 `bootstrap` 与未来 `cloud-system` 共用同一份 DDL & Seed），并支持扩展模块自带独立 `locations` 与 `flyway.table`。
 
 ### 3.3 安全、审计与虚拟线程并发
 - **后台多账号鉴权**：管理端路由 `/admin/**` 绑定 `loginType = "admin"`（请求头 `satoken-admin`）；超级管理员角色标识收敛为 **`super_admin`**（严禁普通租户角色命名为 `admin`）；权限码遵循三段式 `<域>:<资源>:<动作>`。
@@ -87,7 +88,10 @@
 
 - 底层缺口即停工硬门禁（同步副本）：[`.agents/rules/foundation-first-gate.md`](./.agents/rules/foundation-first-gate.md)
 - 跨端通信与数据契约（同步副本）：[`.agents/rules/contracts.md`](./.agents/rules/contracts.md)
+- 全仓代码与架构编程规范（同步副本）：[`.agents/rules/coding-and-architecture.md`](./.agents/rules/coding-and-architecture.md)
+- 文档 1:1 保真与模块规范（同步副本）：[`docs/agents/documentation-specification.md`](./docs/agents/documentation-specification.md)
 - 同源双装配与并存边界守则：[`.agents/rules/cloud-readiness.md`](./.agents/rules/cloud-readiness.md)
+- 后端 AI 全景索引：[`llms.txt`](./llms.txt)
 - 全仓上下文拓扑：[`CONTEXT-MAP.md`](./CONTEXT-MAP.md)
 - 后端架构决策记录：[`docs/adr/README.md`](./docs/adr/README.md)
 - 数据库建模与 Flyway 规范：[`docs/specs/database-and-flyway-spec.md`](./docs/specs/database-and-flyway-spec.md)

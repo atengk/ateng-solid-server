@@ -1,6 +1,6 @@
 # ateng-solid-bootstrap
 
-单体聚合启动装配、外部环境隔离与 Schema 版本化迁移上下文，严禁承载具体业务 Service 或持久层 Mapper。
+单体聚合启动装配与外部环境隔离上下文，严禁承载具体业务 Service、持久层 Mapper 或各领域 Flyway 脚本。
 
 ## Language
 

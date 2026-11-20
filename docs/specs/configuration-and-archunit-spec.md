@@ -7,9 +7,9 @@
 ## 1. Maven POM 依赖边界与版本基线
 
 - **无父 POM 锁死**：根 `pom.xml` 不继承外部 `spring-boot-starter-parent`，通过 `<dependencyManagement>` 顺序导入：
-  1. `io.github.atengk:ateng-boot-bom`（**当前基线 `1.2.0`，待上游 `#1076~#1080` 发布后升级至最新正式版**）；
+  1. `io.github.atengk:ateng-boot-bom`（**当前骨架基线 `1.2.0`，待上游 `#1076~#1080`、`#1093`、`#1094`、`#1134` 及 `flyway` 统一发布递进正式版后升级锁定**）；
   2. `org.springframework.boot:spring-boot-dependencies:3.3.13`。
-  > **并存期 BOM 顺序铁律**：未来在同仓新增 `cloud-*` 启动壳引入 `ateng-cloud-bom` 时，**必须保证 `ateng-boot-bom` 声明在 `ateng-cloud-bom` 之前**，防止传递 BOM 覆写高版本 `ateng-boot`。
+  > **并存期 BOM 顺序铁律**：未来在同仓新增 `ateng-solid-cloud/*` 启动壳引入 `ateng-cloud-bom` 时，**必须保证 `ateng-boot-bom` 声明在 `ateng-cloud-bom` 之前**，防止传递 BOM 覆写高版本 `ateng-boot`。
 - **5 模块编译期依赖锁死矩阵**：
 
 | 模块 | 允许依赖的内部模块 | 允许依赖的外部/底座 Starter | 绝对禁令 |
@@ -18,7 +18,7 @@
 | `ateng-solid-system-api` | `common` | `jakarta.validation-api`、`lombok` | 禁 Web / MyBatis-Plus / Redis / Feign / Dubbo / Entity |
 | `ateng-solid-system` | `common`、`system-api` | `ateng-boot-{web,mybatis-plus,redis,satoken,excel,storage}` | 禁 `ateng-boot-all`、`ateng-cloud-*`、禁反向依赖 `auth` |
 | `ateng-solid-auth` | `common`、`system-api` | `ateng-boot-{web,redis,satoken}` | 禁依赖 `ateng-solid-system` 与任何持久层依赖 |
-| `ateng-solid-bootstrap` | `auth`、`system` | `ateng-boot-{flyway,observability}`、MySQL/H2、Test/ArchUnit | 禁编写业务 Controller / Service / Mapper |
+| `ateng-solid-bootstrap` | `auth`、`system` | `ateng-boot-flyway`（待发版解封）、MySQL/H2、Test/ArchUnit | 禁编写业务 Controller / Service / Mapper，**首期不引入 `ateng-boot-observability`** |
 
 ### 扩展模块可插拔装配约定 (`ateng-solid-ext-*` / `ateng-solid-biz-*`)
 - **只向内依赖**：扩展模块仅允许依赖 `ateng-solid-common`、`ateng-solid-system-api`（及自身业务所需的 `ateng-boot-*` Starter），**严禁依赖或篡改 `ateng-solid-system` / `ateng-solid-auth` 实现模块**；
@@ -31,7 +31,7 @@
 
 | 文件 | 是否入库 | 用途与关键基线配置 |
 | :--- | :---: | :--- |
-| `application.yml` | 是 | 全局公共基线：虚拟线程 `spring.threads.virtual.enabled=true`、Jackson 时区与长整型转字符串、MyBatis-Plus 多租户忽略表、Sa-Token `primary-login-type=admin`、`/admin/system/enums` 枚举端点、`spring.config.import: optional:classpath:application-local.yml` |
+| `application.yml` | 是 | 全局公共基线：虚拟线程 `spring.threads.virtual.enabled=true`、Jackson 时区与长整型转字符串、MyBatis-Plus 多租户忽略表、Sa-Token `primary-login-type=admin`、枚举端点 `endpoint-enabled=false`（交由上层接管）、`spring.config.import: optional:classpath:application-local.yml` |
 | `application-dev.yml` | 是 | 本地开发 Profile：默认日志级别与调试友好参数，**严禁含真实库密码** |
 | `application-test.yml` | 是 | 离线测试 Profile：H2 `MODE=MySQL` 内存库、Flyway 兼容开关、关闭强依赖外部 Redis，保障 `mvn test` 100% 离线自洽 |
 | `application-local.example.yml` | 是 | 脱敏占位符模板（`YOUR_DB_HOST` / `YOUR_DB_PASSWORD` / `YOUR_REDIS_PASSWORD`） |
@@ -56,3 +56,5 @@
    - 标注 `@RestController` / `@Controller` 的所有公开方法参数与返回值（含泛型参数）**严禁**出现 `..entity..` 包中的持久化实体类。
 4. **启动模块纯净守卫**：
    - `ateng-solid-bootstrap` 根装配包不承载业务 `*Mapper` 或业务 `@RestController`。
+5. **同源编码红线守卫（配套 [`.agents/rules/coding-and-architecture.md`](../../.agents/rules/coding-and-architecture.md)）**：
+   - 随代码推进增量补充：Service 不得直接访问 `jakarta.servlet.http.HttpServletRequest`/`HttpServletResponse`、Mapper 层不得反向依赖 Controller/Service。

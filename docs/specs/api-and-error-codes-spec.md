@@ -25,7 +25,7 @@
 
 | 资源域 | 路径前缀 | 典型接口与权限码 | 核心说明 |
 | :--- | :--- | :--- | :--- |
-| **静态枚举** | `/admin/system/enums` | `GET /admin/system/enums`、`GET /admin/system/enums/{alias}` | 由 `ateng-boot-web` `EnumDictionaryController` 暴露 `IBaseEnum`（受登录态保护） |
+| **静态枚举** | `/admin/system/enums` | `GET /admin/system/enums`、`GET /admin/system/enums/{name}`、`GET / POST /admin/system/enums/batch` | 关闭底座内置端点（`endpoint-enabled=false`），由 `ateng-solid-system` `SysEnumController` 注入 `EnumDictionaryRegistry` 接管并施加 `@SaCheckLogin` 鉴权管控 |
 | **租户管理** | `/admin/system/tenant` | `GET /page` (`system:tenant:list`)、`GET /{id}`、`POST` (`create`)、`PUT` (`update`)、`DELETE /{ids}` (`delete`)、`PUT /{id}/status` | 仅在开启多租户且平台默认租户（`tenantId = 0`）可见与维护；禁止删除租户 `0`；`account_count` 仅新增/启用用户时增量拦截 |
 | **租户套餐** | `/admin/system/tenant-package` | `GET /page` (`system:tenant-package:list`)、`GET /options`、`POST`、`PUT`、`DELETE /{ids}` | 仅平台租户 `0` 维护，禁止勾选平台专属菜单；缩减菜单时事务内联动裁剪关联租户角色越界菜单并刷新缓存 |
 | **用户管理** | `/admin/system/user` | `GET /page` (`system:user:list`)、`GET /{id}`、`POST`、`PUT`、`DELETE /{ids}`、`PUT /{id}/status`、`PUT /{id}/reset-password`、`POST /import` (`import`)、`GET /import/feedback/{feedbackToken}`、`POST /export` (`export`)、`POST /avatar` | 联动 `@DataScope`、Fesod 整批原子校验（`ImportResultVO` + 临时批注下载）与 `ateng-boot-storage` 头像存储 |
