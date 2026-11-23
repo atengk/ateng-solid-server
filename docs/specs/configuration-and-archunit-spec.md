@@ -7,7 +7,7 @@
 ## 1. Maven POM 依赖边界与版本基线
 
 - **无父 POM 锁死**：根 `pom.xml` 不继承外部 `spring-boot-starter-parent`，通过 `<dependencyManagement>` 顺序导入：
-  1. `io.github.atengk:ateng-boot-bom`（**当前骨架基线 `1.2.0`，待上游 `#1076~#1080`、`#1093`、`#1094`、`#1134` 及 `flyway` 统一发布递进正式版后升级锁定**）；
+  1. `io.github.atengk:ateng-boot-bom`（**已锁定正式版 `1.2.0`，含 `#1076~#1080`、`#1093`、`#1094`、`#1134~#1137`、`#1163~#1167` 与 `ateng-boot-flyway`**）；
   2. `org.springframework.boot:spring-boot-dependencies:3.3.13`。
   > **并存期 BOM 顺序铁律**：未来在同仓新增 `ateng-solid-cloud/*` 启动壳引入 `ateng-cloud-bom` 时，**必须保证 `ateng-boot-bom` 声明在 `ateng-cloud-bom` 之前**，防止传递 BOM 覆写高版本 `ateng-boot`。
 - **5 模块编译期依赖锁死矩阵**：
@@ -18,7 +18,7 @@
 | `ateng-solid-system-api` | `common` | `jakarta.validation-api`、`lombok` | 禁 Web / MyBatis-Plus / Redis / Feign / Dubbo / Entity |
 | `ateng-solid-system` | `common`、`system-api` | `ateng-boot-{web,mybatis-plus,redis,satoken,excel,storage}` | 禁 `ateng-boot-all`、`ateng-cloud-*`、禁反向依赖 `auth` |
 | `ateng-solid-auth` | `common`、`system-api` | `ateng-boot-{web,redis,satoken}` | 禁依赖 `ateng-solid-system` 与任何持久层依赖 |
-| `ateng-solid-bootstrap` | `auth`、`system` | `ateng-boot-flyway`（待发版解封）、MySQL/H2、Test/ArchUnit | 禁编写业务 Controller / Service / Mapper，**首期不引入 `ateng-boot-observability`** |
+| `ateng-solid-bootstrap` | `auth`、`system` | `ateng-boot-flyway`、MySQL/H2、Test/ArchUnit | 禁编写业务 Controller / Service / Mapper，**首期不引入 `ateng-boot-observability`** |
 
 ### 扩展模块可插拔装配约定 (`ateng-solid-ext-*` / `ateng-solid-biz-*`)
 - **只向内依赖**：扩展模块仅允许依赖 `ateng-solid-common`、`ateng-solid-system-api`（及自身业务所需的 `ateng-boot-*` Starter），**严禁依赖或篡改 `ateng-solid-system` / `ateng-solid-auth` 实现模块**；
