@@ -31,15 +31,18 @@
 
 | 文件 | 是否入库 | 用途与关键基线配置 |
 | :--- | :---: | :--- |
-| `application.yml` | 是 | 全局公共基线：虚拟线程 `spring.threads.virtual.enabled=true`、Jackson 时区与长整型转字符串、MyBatis-Plus 多租户忽略表、Sa-Token `primary-login-type=admin`、枚举端点 `endpoint-enabled=false`（交由上层接管）、`spring.config.import: optional:classpath:application-local.yml` |
+| `application.yml` | 是 | 全局公共基线：虚拟线程 `spring.threads.virtual.enabled=true`、Jackson 时区与长整型转字符串、MyBatis-Plus 多租户忽略表、Sa-Token `primary-login-type=admin`、**显式收敛 `super-admin-roles: [super_admin]`**、租户切头 `allow-super-admin-switch` / `platform-tenant-ids: ["0"]`、存储防伪 `storage.guard.enabled=true` & `strict-magic-check=true`、枚举端点 `endpoint-enabled=false`（交由上层接管）、`spring.config.import: optional:classpath:application-local.yml` |
 | `application-dev.yml` | 是 | 本地开发 Profile：默认日志级别与调试友好参数，**严禁含真实库密码** |
 | `application-test.yml` | 是 | 离线测试 Profile：H2 `MODE=MySQL` 内存库、Flyway 兼容开关、关闭强依赖外部 Redis，保障 `mvn test` 100% 离线自洽 |
 | `application-local.example.yml` | 是 | 脱敏占位符模板（`YOUR_DB_HOST` / `YOUR_DB_PASSWORD` / `YOUR_REDIS_PASSWORD`） |
 | `application-local.yml` | **否（`.gitignore`）** | 开发者本地覆盖文件，存放真实云端 MySQL / Redis 连接凭据 |
 
 ### 业务扩展配置收口 (`ateng.solid.*`)
-- 统一使用 `@ConfigurationProperties(prefix = "ateng.solid.*")` 强类型绑定（时间用 `Duration`，容量用 `DataSize`）；
+- 统一使用 `@ConfigurationProperties(prefix = "ateng.solid.*")` 强类型绑定（时间用 `Duration`，容量用 `DataSize`），覆盖 `ateng.solid.tenant.enabled`（默认 `false`）、`ateng.solid.auth.captcha-enabled`、`ateng.solid.init.super-admin-password`；
 - **严禁**在 `@Service` / `@Component` / `@RestController` 上使用 `@RefreshScope` 或零散 `@Value`。
+
+### 增量底座本地联调与锁版提醒（`Spec 3` / `Spec 4`）
+- `B14`（`ateng-boot#1171`，`ExcelUtil.readWithResult` 校验 `maxSyncRows`）与 `B15`（`ateng-boot#1172`，`LocalStorageProperties` `whitelist-presigned-download` / `upload-endpoint-enabled` 白名单协同）均已在上游 `dev` 闭环关单；本地开发按 `.agents/rules/foundation-first-gate.md` 第 5 节 SOP 消费 `1.2.1-SNAPSHOT` 验证，**正式提交合入 `dev`/`main` 前须待 `ateng-boot` 发布递进正式版并锁回正式版本号**（`pre-commit` 自动拦截 `-SNAPSHOT`）。
 
 ---
 

@@ -18,6 +18,7 @@
      - `update_by VARCHAR(64) NOT NULL DEFAULT 'SYSTEM'`
      - `update_time DATETIME NOT NULL`
      - `deleted BIGINT NOT NULL DEFAULT 0`（软删除由 MyBatis-Plus `@TableLogic(value="0", delval="id")` 回填自身 `id`）
+     - > **底座填充边界提示**：`DefaultMetaObjectHandler#insertFill` 仅自动填充审计四字段与 `tenantId`，**不会填充 `deleted` 与 `version`**；普通单条 `insert` 依赖 DDL 显式声明 `NOT NULL DEFAULT 0`（或构造期初值）。
    - **`BaseFullEntity` 表追加乐观锁列（仅需并发 CAS 防覆盖表按需继承）**：
      - `version INT NOT NULL DEFAULT 0`（与重构后的 `BatchUtil` 默认初始值 `0` 严格对齐）
    - **多租户隔离表追加列**：`tenant_id BIGINT NOT NULL DEFAULT 0`（平台默认租户 ID `0`，实体实现 **`TenantAware<Long>`**）。
@@ -30,23 +31,23 @@
 ### 2.1 平台共享表（列入 `ignore-tables`，不走行级租户过滤）
 | 表名 | 继承基类 | 核心字段与唯一索引约定 |
 | :--- | :--- | :--- |
-| `sys_tenant` | `BaseLogicEntity` | `id`（默认租户为 `0`）、`tenant_code`（唯一索引 `(tenant_code, deleted)`，默认 `'000000'`）、`tenant_name`、`package_id`、`expire_time`、`account_count`、`status` |
-| `sys_tenant_package` | `BaseLogicEntity` | `package_name`（唯一索引 `(package_name, deleted)`）、`status` |
+| `sys_tenant` | `BaseLogicEntity` | `id`（默认租户为 `0`）、`tenant_code`（唯一索引 `(tenant_code, deleted)`，默认 `'000000'`）、`tenant_name`、`package_id`、`expire_time`（`NULL` 永久有效）、`account_count`（`-1` 不限 / `>= 1` 上限）、`status`、`remark` |
+| `sys_tenant_package` | `BaseLogicEntity` | `package_name`（唯一索引 `(package_name, deleted)`）、`menu_check_strictly`（`TINYINT NOT NULL DEFAULT 1`）、`status`、`remark` |
 | `sys_tenant_package_menu` | `BaseIdEntity` | `(package_id, menu_id)` 关联唯一键（无软删与审计冗余字段） |
-| `sys_menu` | `BaseLogicEntity` | `parent_id`、`menu_type` (`M`/`C`/`F`)、`title`、`name`、`path`、`component`、`redirect`、`perms`、`icon`、`sort`、`visible`、`status`、`keep_alive`、`is_external` |
-| `sys_dict_type` | `BaseLogicEntity` | `dict_name`、`dict_type`（唯一索引 `(dict_type, deleted)`）、`status` |
-| `sys_dict_data` | `BaseLogicEntity` | `dict_type`、`dict_label`、`dict_value`、`tag_type`、`css_class`、`sort`、`is_default`、`status` |
+| `sys_menu` | `BaseLogicEntity` | `parent_id`、`menu_type` (`M`/`C`/`F`)、`title`、`name`、`path`、`component`、`redirect`、`perms`、`icon`、`sort`、`visible`、`status`、`keep_alive`、`is_external`、`platform_only`（`TINYINT NOT NULL DEFAULT 0`，标记平台专属菜单与按钮） |
+| `sys_dict_type` | `BaseLogicEntity` | `dict_name`、`dict_type`（唯一索引 `(dict_type, deleted)`）、`status`、`remark` |
+| `sys_dict_data` | `BaseLogicEntity` | `dict_type`、`dict_label`、`dict_value`、`tag_type`、`css_class`、`sort`、`is_default`、`status`、`remark` |
 
 ### 2.2 租户隔离表（强制行级 `tenant_id` 过滤，实体实现 `TenantAware<Long>`）
 | 表名 | 继承基类 | 核心字段与唯一索引约定 |
 | :--- | :--- | :--- |
 | `sys_dept` | `BaseLogicEntity` | `tenant_id`、`parent_id`、`ancestors`（逗号分隔祖先路径，如 `0,100`）、`dept_name`、`sort`、`leader_user_id`、`phone`、`email`、`status` |
-| `sys_post` | `BaseLogicEntity` | `tenant_id`、`post_code`（唯一索引 `(tenant_id, post_code, deleted)`）、`post_name`、`sort`、`status` |
-| `sys_role` | `BaseLogicEntity` | `tenant_id`、`role_name`、`role_key`（唯一索引 `(tenant_id, role_key, deleted)`，**禁止普通租户使用 `super_admin`/`admin`**）、`data_scope`、`sort`、`status` |
-| `sys_user` | `BaseLogicEntity` | `tenant_id`、`dept_id`、`username`（唯一索引 `(tenant_id, username, deleted)`）、`nickname`、`password`（PBKDF2 慢哈希）、`email`、`phone`、`gender`、`avatar`、`status`、`login_ip`、`login_date` |
-| `sys_config` | `BaseLogicEntity` | `tenant_id`、`config_name`、`config_key`（唯一索引 `(tenant_id, config_key, deleted)`）、`config_value`、`config_type` |
+| `sys_post` | `BaseLogicEntity` | `tenant_id`、`post_code`（唯一索引 `(tenant_id, post_code, deleted)`）、`post_name`、`sort`、`status`、`remark` |
+| `sys_role` | `BaseLogicEntity` | `tenant_id`、`role_name`、`role_key`（唯一索引 `(tenant_id, role_key, deleted)`，**禁止普通租户使用 `super_admin`/`admin`**）、`data_scope`、`menu_check_strictly`（`TINYINT NOT NULL DEFAULT 1`）、`dept_check_strictly`（`TINYINT NOT NULL DEFAULT 0`）、`sort`、`status`、`remark` |
+| `sys_user` | `BaseLogicEntity` | `tenant_id`、`dept_id`、`username`（唯一索引 `(tenant_id, username, deleted)`）、`nickname`、`password`（PBKDF2 慢哈希 `VARCHAR(128)`）、`pwd_update_time`（`DATETIME NULL`，新建/重置置空触发改密提醒）、`email`、`phone`、`gender`、`avatar`、`status`、`login_ip`、`login_date`、`remark` |
+| `sys_config` | `BaseLogicEntity` | `tenant_id`、`config_name`、`config_key`（唯一索引 `(tenant_id, config_key, deleted)`）、`config_value`、`config_type`（`'Y'` 系统内置 / `'N'` 业务自建）、`remark` |
 | `sys_user_role` / `sys_user_post` / `sys_role_menu` / `sys_role_dept` | `BaseIdEntity` | 均携带 `tenant_id BIGINT NOT NULL DEFAULT 0` 随业务租户隔离，承载多对多绑定关系，不跨模块关联 |
-| `sys_oper_log` | `BaseIdEntity` | `tenant_id`、`trace_id`、`user_id`、`user_name`、`module`、`operate_type`、`request_method`、`request_url`、`client_ip`、`operate_location`、`request_params`、`response_result`、`status`、`cost_time`、`error_msg`、`extra_json`、`operate_time` |
+| `sys_oper_log` | `BaseIdEntity` | `tenant_id`、`trace_id`、`user_id`、`user_name`、`module`、`operate_type`（`INT NOT NULL`，对齐 `OperateTypeEnum.code`）、`request_method`、`request_url`、`client_ip`、`operate_location`、`browser`（`VARCHAR(64) NULL`）、`os`（`VARCHAR(64) NULL`）、`request_params`、`response_result`、`status`、`cost_time`、`error_msg`、`extra_json`、`operate_time` |
 | `sys_login_log` | `BaseIdEntity` | `tenant_id`、`trace_id`、`username`、`login_type`、`client_ip`、`login_location`、`browser`、`os`、`status`、`msg`、`login_time` |
 
 ---
@@ -64,3 +65,7 @@
 3. **`ateng-boot-flyway` 安全配置**：
    - 保持 `validate-on-migrate: true`、`out-of-order: false`；
    - 生产 Profile 严禁开启 `clean`（由 `ateng-boot-flyway` `ProductionSafetyGuard` 自动熔断保护）。
+4. **第一阶段 `V1.0.1__system_init_seed.sql` 确定性初始化清单**：
+   - **默认租户与组织角色**：`sys_tenant`（`id=0`, `tenant_code='000000'`, `account_count=-1`, `expire_time=NULL`）、`sys_dept`（`id=100`, `tenant_id=0`, `ancestors='0'`, `dept_name='平台总部'`）、`sys_role`（`id=1`, `tenant_id=0`, `role_key='super_admin'`, `data_scope=1`）；
+   - **初始菜单树（`sys_menu`）**：包含 4 个领域目录（`M`）、12 个页面菜单（`C`）与对应 `F` 权限按钮，其中`多租户治理`目录及下属`租户管理`（`/system/tenant`）、`租户套餐`（`/system/tenant-package`），以及`菜单管理`（`/system/menu`）、`数据字典`（`/system/dict`）及其全部子 `F` 按钮标记为 `platform_only = 1`；
+   - **内置动态字典与系统参数**：`sys_user_gender`（`0=男`、`1=女`、`2=未知 [is_default=1]`）、`sys_yes_no`（`Y=是`、`N=否 [is_default=1]`）与 `sys.user.initPassword = 'Ateng@2026'`（`config_type='Y'`）。完整矩阵核对见根仓 `docs/specs/phase1-coding-readiness-checklist.md`。

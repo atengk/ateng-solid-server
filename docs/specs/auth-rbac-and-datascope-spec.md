@@ -11,12 +11,15 @@
   - 配置 `ateng.boot.satoken.primary-login-type=admin`、`interceptor.check-login=true`、`interceptor.login-type-routes.admin=/admin/**`；
   - 公开免鉴权接口（如登录 `POST /admin/auth/login`、验证码 `GET /admin/auth/captcha`）统一显式标注 `@Anonymous`。
 - **图形验证码（`CaptchaTemplate`）**：
-  - 由业务配置 `ateng.solid.auth.captcha-enabled`（默认可配开启）控制是否强校验图形验证码；
-  - 校验统一调用 `CaptchaTemplate.verifyAndThrow(captchaKey, code)`，确保一次一密原子消耗。
-- **口令安全与登录防爆破**：
-  - 密码存储与比对 100% 复用 `PasswordUtil.hash(...)` / `PasswordUtil.matches(...)`（`PBKDF2WithHmacSHA256`）；
-  - 登录失败锁定调用 `LoginFailureLockService`，等待底座完成 [`atengk/ateng-boot#1079`](https://github.com/atengk/ateng-boot/issues/1079) 的 `(tenantId, loginType, account, clientIp)` 多租户作用域重载并发版后直接接入（严禁在上层手动拼接临时键绕过），严防跨租户同名账号误锁；
-  - 登录/登出事件统一发布领域事件交由 `RemoteAuditLogService` 异步落库 `sys_login_log`（透传 `AsyncContext` 四维快照）。
+  - `CaptchaTemplate` 归属 `ateng-boot-web`，由业务配置 `ateng.solid.auth.captcha-enabled`（默认可配开启）控制是否强校验图形验证码；
+  - 校验统一调用 **`boolean verify(captchaKey, code)`**（一次一密原子烧毁），返回 `false` 时业务层显式抛出 `AuthResultCode(101001)`（因底座 `verifyOrThrow` 固定抛 HTTP `400`）。
+- **登录校验顺序、口令安全与防爆破**：
+  - `POST /admin/auth/login` 严格按串行顺序校验：**图形验证码（`101001`）➔ 租户解析与可用性（`101005`）➔ 防爆破前置检查（`LoginFailureLockService.isLocked` + `getDisableTime` 自抛 `101004` 含剩余秒数，避免底座 `checkLocked` 直接抛 `403`）➔ 账号与口令统一防枚举计数（`101002`/`101003`）**；
+  - 密码存储与比对 100% 复用 `PasswordUtil.hash(...)` / `PasswordUtil.matches(...)`（`PBKDF2WithHmacSHA256`）；底座不提供复杂度校验，由 `ateng-solid` 统一强制“8~20 位无空白且至少含 3 类字符”强口令策略；
+  - 防爆破调用 `LoginFailureLockService` 的 `(tenantId, "admin", account, clientIp)` 多租户作用域重载（`ateng-boot:1.2.0` 已就绪，严禁手动拼串绕过）；
+  - 修改密码（`PUT /admin/auth/password`）、重置密码及停用/删除用户或租户时，联动写入 `pwd_update_time` 并通过 `LoginHelper` 强制注销全部活跃 `admin` 会话；
+  - 在线会话列表（`/admin/auth/online/page`）禁止下发原始 `tokenValue`，仅下发 `tokenMask` 与不可认证的不透明句柄 `sessionId`，强退通过 `LoginHelper.kickoutByTokenForTenant` 校验租户边界；
+  - 登录/登出事件统一发布领域事件交由 `RemoteAuditLogService` 异步落库 `sys_login_log`（复用底座 `UserAgentUtil.parse` 解析 `browser`/`os`，透传 `AsyncContext` 四维快照）。
 - **可插拔认证策略 SPI (`AuthGrantHandler`)**：
   - 核心 `auth` 模块通过 `AuthGrantHandler` 策略接口解耦认证方式（首期仅内置 `password` 账密登录实现），`AuthService` 按请求 `grantType` 自动匹配容器中已注册的 Handler Bean；
   - 后续接入 `ext-social`（OAuth2）或短信登录时仅需实现该接口并注册为 Spring Bean，**零修改 `auth` 核心源码**。
@@ -43,10 +46,11 @@
 
 1. **权限编码与超管收敛**：
    - 权限码采用三段式 `<域>:<资源>:<动作>`（例如 `system:user:list`、`system:user:create`、`system:user:update`、`system:user:delete`、`system:user:export`、`system:user:import`）；
-   - 平台超管角色编码唯一收敛为 **`super_admin`**（全权限 `*:*:*`）；普通租户创建角色时校验禁止使用 `super_admin` 或 `admin` 保留编码。
-   - **注解路由红线**：在 `ateng-boot` 完成 [`atengk/ateng-boot#1076`](https://github.com/atengk/ateng-boot/issues/1076) 与 [`#1077`](https://github.com/atengk/ateng-boot/issues/1077) 通用改造并正式发版前，暂停该特性上层编码（严禁在控制器重复手写 `type = "admin"` 或自写补偿拦截器绕过）；底座发版后直接采用标准 `@SaCheckPermission` / `@SaCheckRole` 与配置式 `superAdminRoles`。
-   - **权限缓存刷新与多租户隔离策略**：依托 `PermissionCacheService` 与 `SaTokenClusterSyncListener` 实现集群广播失效——用户角色变更调用 `clearUserCache("admin", userId)`；角色菜单变更调用 `clearRoleCache`（开启多租户前须升级支持 `atengk/ateng-boot#1093` 租户维度角色缓存隔离）；菜单或租户套餐变更在事务内联动裁剪越界 `sys_role_menu` 并调用 `clearAll()`。
+   - 平台超管角色编码唯一收敛为 **`super_admin`**（全权限 `*:*:*`），**必须在 `application.yml` 显式配置 `ateng.boot.satoken.super-admin-roles: ["super_admin"]`** 覆盖底座默认 `["admin", "super_admin"]`；普通租户创建角色时校验禁止使用 `super_admin` 或 `admin` 保留编码。
+   - **注解路由红线**：`ateng-boot:1.2.0` 已就绪 `#1076` 与 `#1077`（自动 `StpLogic` 路由与 `DataPermissionContextHolder` 自动同步），控制器直接采用标准 `@SaCheckPermission` / `@SaCheckRole`，严禁重复手写 `type = "admin"` 或自写补偿拦截器。
+   - **权限缓存刷新与多租户隔离策略**：依托 `PermissionCacheService`（`ateng-boot:1.2.0` 已支持三参隔离与复合 `loginId` 解析，`#1093`/`#1164`）与 `SaTokenClusterSyncListener` 实现集群广播失效——用户角色变更、停删必须调用 3 参 **`clearUserCache("admin", tenantId, userId)`**；角色菜单变更必须调用 3 参 **`clearRoleCache("admin", tenantId, roleKey)`**；菜单或租户套餐变更在事务内联动裁剪越界 `sys_role_menu` 并调用 `clearAll()`。
 2. **5 级 `@DataScope` 数据权限规范**：
+   - 底座 `ateng-boot-mybatis-plus` 仅提供 `@DataScope` 注解与 `DataPermissionHandler` SPI，**`DataScopeType` 枚举由 `ateng-solid-common` 自建（实现 `IBaseEnum<Integer>`）** 并在 `ateng-solid-system` 实现 `DataPermissionHandler` Bean：
    - 角色字段 `data_scope` 对应枚举 `DataScopeType`：
      - `1 / ALL`：全部数据权限（不追加过滤）；
      - `2 / CUSTOM`：自定部门数据权限（基于 `sys_role_dept` 构造 `dept_id IN (...)`）；
@@ -60,5 +64,5 @@
 
 ## 4. 操作审计与静态枚举端点
 
-- **操作审计（`@OperateLog`）**：Controller 写操作方法标配 `@OperateLog(module = "...", operateType = OperateTypeEnum.XXX)`；在 `system` 模块实现 `OperateLogStorageProvider` SPI 将 `OperateLogModel`（含从请求解析写入 `extra` 的 `browser`/`os`）异步写入 `sys_oper_log`。
+- **操作审计（`@OperateLog`）**：Controller 写操作方法标配 `@OperateLog(module = "...", type = OperateTypeEnum.XXX)`（注意属性名为 `type`）；`OperateLogAspect` 已同步填充 `OperateLogModel` 的 `userAgent`/`browser`/`os`，在 `system` 模块实现 `OperateLogStorageProvider` SPI 时须从 `LoginHelper.getLoginUser()` 补全真实 `userName` 并异步写入 `sys_oper_log`。
 - **静态枚举端点（上层自主接管）**：配置 `ateng.boot.web.enum.enabled=true`、`endpoint-enabled=false`（`ateng-boot#1094`）、`scan-packages=io.github.atengk.solid`，在 `ateng-solid-system` 自建 `SysEnumController` 注入 `EnumDictionaryRegistry` 暴露 `/admin/system/enums`（全量/单个/批量），标注 `@SaCheckLogin` 强制受管理端登录态保护并可按需扩展细粒度权限与租户过滤。
