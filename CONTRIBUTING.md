@@ -15,7 +15,7 @@
    git pull origin dev
    git checkout -b feat/your-feature-name
    ```
-2. 编码须严格遵循 [`AGENTS.md`](./AGENTS.md)、[`.agents/rules/contracts.md`](./.agents/rules/contracts.md) 与 [`.agents/rules/cloud-readiness.md`](./.agents/rules/cloud-readiness.md)；
+2. 编码须严格遵循 [`AGENTS.md`](./AGENTS.md)、[`docs/agents/contracts.md`](./docs/agents/contracts.md) 与 [`docs/agents/cloud-readiness.md`](./docs/agents/cloud-readiness.md)；
 3. 提交前必须确保全量离线 H2 测试通过：
    ```bash
    mvn clean test -B -T 1C -nsu

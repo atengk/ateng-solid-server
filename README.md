@@ -32,11 +32,11 @@
 - **双模配置**：本地连接外部 MySQL / Redis 时配置于被 `.gitignore` 忽略的 `application-local.yml`（参照 `application-local.example.yml`）；单测与集成测试依托 H2（`MODE=MySQL`）与内存降级 100% 离线自洽。
 - **核心规范入口**：
   - 独立开发行为准则：[`AGENTS.md`](./AGENTS.md)
-  - 底层缺口即停工硬门禁（同步副本）：[`.agents/rules/foundation-first-gate.md`](./.agents/rules/foundation-first-gate.md)
-  - 跨端契约规范（同步副本）：[`.agents/rules/contracts.md`](./.agents/rules/contracts.md)
-  - 全仓代码与架构编程规范（同步副本）：[`.agents/rules/coding-and-architecture.md`](./.agents/rules/coding-and-architecture.md)
+  - 底层缺口即停工与联调 SOP（同步副本）：[`docs/agents/foundation-first-gate.md`](./docs/agents/foundation-first-gate.md)
+  - 跨端契约规范（同步副本）：[`docs/agents/contracts.md`](./docs/agents/contracts.md)
+  - 编码、架构拆解与注释规范（同步副本）：[`docs/agents/coding-standards.md`](./docs/agents/coding-standards.md)
   - 文档 1:1 保真规范（同步副本）：[`docs/agents/documentation-specification.md`](./docs/agents/documentation-specification.md)
-  - 同源双装配守则：[`.agents/rules/cloud-readiness.md`](./.agents/rules/cloud-readiness.md)
+  - 同源双装配守则：[`docs/agents/cloud-readiness.md`](./docs/agents/cloud-readiness.md)
   - 后端 AI 全景索引：[`llms.txt`](./llms.txt)
   - 上下文地图：[`CONTEXT-MAP.md`](./CONTEXT-MAP.md)
   - 架构决策记录：[`docs/adr/README.md`](./docs/adr/README.md)

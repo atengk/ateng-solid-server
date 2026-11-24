@@ -11,4 +11,4 @@
 ## 关联文档
 
 - 领域词汇表：[`CONTEXT.md`](./CONTEXT.md)
-- 同源双装配边界守则：[cloud-readiness.md](../.agents/rules/cloud-readiness.md)
+- 同源双装配边界守则：[cloud-readiness.md](../docs/agents/cloud-readiness.md)

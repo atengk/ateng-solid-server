@@ -2,7 +2,7 @@
 
 本仓库（`atengk/ateng-solid-server`）使用 **GitHub Issues** 管理后端需求、模块规格、ArchUnit/测试任务与缺陷，统一通过 `gh` CLI 操作（标签映射详见 [`triage-labels.md`](./triage-labels.md)）。
 
-> **底层缺口联动**：开发过程中若发现 `ateng-boot` 或 `ateng-cloud` 存在基础设施能力缺失或缺陷，严禁在本仓编写绕过补丁，须立即按 [`.agents/rules/foundation-first-gate.md`](../../.agents/rules/foundation-first-gate.md) 暂停受阻特性并向对应底座仓库提交通用化 Issue。
+> **底层缺口联动**：开发过程中若发现 `ateng-boot` 或 `ateng-cloud` 存在基础设施能力缺失或缺陷，严禁在本仓编写绕过补丁，须立即按 [`foundation-first-gate.md`](./foundation-first-gate.md) 暂停受阻特性并向对应底座仓库提交通用化 Issue。
 
 ---
 

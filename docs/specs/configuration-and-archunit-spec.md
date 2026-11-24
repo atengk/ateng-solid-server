@@ -42,7 +42,7 @@
 - **严禁**在 `@Service` / `@Component` / `@RestController` 上使用 `@RefreshScope` 或零散 `@Value`。
 
 ### 增量底座本地联调与锁版提醒（`Spec 3` / `Spec 4`）
-- `B14`（`ateng-boot#1171`，`ExcelUtil.readWithResult` 校验 `maxSyncRows`）与 `B15`（`ateng-boot#1172`，`LocalStorageProperties` `whitelist-presigned-download` / `upload-endpoint-enabled` 白名单协同）均已在上游 `dev` 闭环关单；本地开发按 `.agents/rules/foundation-first-gate.md` 第 5 节 SOP 消费 `1.2.1-SNAPSHOT` 验证，**正式提交合入 `dev`/`main` 前须待 `ateng-boot` 发布递进正式版并锁回正式版本号**（`pre-commit` 自动拦截 `-SNAPSHOT`）。
+- `B14`（`ateng-boot#1171`，`ExcelUtil.readWithResult` 校验 `maxSyncRows`）与 `B15`（`ateng-boot#1172`，`LocalStorageProperties` `whitelist-presigned-download` / `upload-endpoint-enabled` 白名单协同）均已在上游 `dev` 闭环关单；本地开发按 `docs/agents/foundation-first-gate.md` 第 4 节 SOP 消费 `1.2.1-SNAPSHOT` 验证，**正式提交合入 `dev`/`main` 前须待 `ateng-boot` 发布递进正式版并锁回正式版本号**（`pre-commit` 自动拦截 `-SNAPSHOT`）。
 
 ---
 
@@ -59,5 +59,5 @@
    - 标注 `@RestController` / `@Controller` 的所有公开方法参数与返回值（含泛型参数）**严禁**出现 `..entity..` 包中的持久化实体类。
 4. **启动模块纯净守卫**：
    - `ateng-solid-bootstrap` 根装配包不承载业务 `*Mapper` 或业务 `@RestController`。
-5. **同源编码红线守卫（配套 [`.agents/rules/coding-and-architecture.md`](../../.agents/rules/coding-and-architecture.md)）**：
+5. **分层与上下文纯净守卫（配套 [`AGENTS.md`](../../AGENTS.md) 与 [`coding-standards.md`](../agents/coding-standards.md)）**：
    - 随代码推进增量补充：Service 不得直接访问 `jakarta.servlet.http.HttpServletRequest`/`HttpServletResponse`、Mapper 层不得反向依赖 Controller/Service。

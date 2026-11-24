@@ -100,4 +100,4 @@ flowchart LR
 - [ ] **7. `CONTEXT` / `ADR` / `llms.txt` 同步**：新领域术语与 `_Avoid_` 词表是否内联更新至 `CONTEXT.md`？新增模块/重要文档入口是否已收录进 `llms.txt`（且 `llms.txt` 无硬编码版本号）？
 - [ ] **8. 排版防裂与纯相对路径**：表格泛型/管道符是否正确转义、多层代码块是否使用四反引号、全部内部链接是否采用相对路径且无死链与本地盘符路径？
 - [ ] **9. 双模安全与零明文凭据**：示例配置与文档中是否全部采用大写语义占位符（如 `YOUR_DB_PASSWORD`），100% 杜绝真实连接串、Token 或默认弱口令哈希泄露？
-- [ ] **10. 架构红线与复用规范对齐**：源码是否同时满足 [`.agents/rules/coding-and-architecture.md`](../../.agents/rules/coding-and-architecture.md) 中的代码复用、大类拆分边界、设计模式选型、零 Entity 泄漏与空安全并发红线？
+- [ ] **10. 架构与编码红线对齐**：源码是否同时满足本仓 [`AGENTS.md`](../../AGENTS.md)、[`contracts.md`](./contracts.md) 与 [`coding-standards.md`](./coding-standards.md) 中的分层边界、大类拆解、注释规范、零 Entity 泄漏与多租户安全红线？
