@@ -205,11 +205,8 @@ public class RemotePermissionServiceImpl implements RemotePermissionService {
             return Collections.emptySet();
         }
         return TenantContextHolder.runWithoutTenant(() -> {
-            SysTenantPackage pkg = sysTenantPackageMapper.selectOne(
-                    Wrappers.<SysTenantPackage>lambdaQuery()
-                            .eq(SysTenantPackage::getId, tenant.getPackageId())
-                            .eq(SysTenantPackage::getStatus, CommonStatusEnum.NORMAL.getCode())
-            );
+            // 停用套餐仅禁用后续新建/换套餐新选，严禁中断已绑定该套餐的存量租户继续运行
+            SysTenantPackage pkg = sysTenantPackageMapper.selectById(tenant.getPackageId());
             if (pkg == null) {
                 return Collections.emptySet();
             }

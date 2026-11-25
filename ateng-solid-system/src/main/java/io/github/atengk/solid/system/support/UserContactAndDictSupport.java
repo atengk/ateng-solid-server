@@ -57,9 +57,20 @@ public class UserContactAndDictSupport {
      * @return 规范化账号
      */
     public String requireValidUsername(String rawUsername) {
+        return requireValidUsernameFormat(rawUsername, "用户账号须为 2~30 位字母、数字或下划线");
+    }
+
+    /**
+     * 静态校验并规范化登录账号（裁剪空白后须满足 2~30 位字母、数字或下划线）。
+     *
+     * @param rawUsername 原始登录账号输入
+     * @param errorMsg    校验失败提示信息
+     * @return 规范化账号
+     */
+    public static String requireValidUsernameFormat(String rawUsername, String errorMsg) {
         String username = SystemContextSupport.trimToNull(rawUsername);
         if (username == null || !USERNAME_PATTERN.matcher(username).matches()) {
-            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "用户账号须为 2~30 位字母、数字或下划线");
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, errorMsg);
         }
         return username;
     }

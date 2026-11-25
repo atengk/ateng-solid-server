@@ -19,6 +19,7 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -95,6 +96,39 @@ public class SystemContextSupport {
     }
 
     /**
+     * 校验系统已开启多租户模式且当前生效租户为平台默认租户 {@code 0L}；未开启或切至普通租户时统一抛出 {@code 403}。
+     *
+     * @return 平台默认租户主键 {@code 0L}
+     * @throws BusinessException 未开启多租户模式或非平台默认租户视角时抛出 {@code 403}
+     */
+    public Long requireMultiTenantPlatformAccess() {
+        if (!isMultiTenantEnabled()) {
+            throw new BusinessException(CommonResultCode.FORBIDDEN, "当前系统未开启多租户模式");
+        }
+        return requirePlatformTenantId();
+    }
+
+    /**
+     * 校验平台超管切换租户选项查询权限（要求开启多租户且当前会话归属平台租户 {@code 0} 并具备 {@code super_admin} 角色）。
+     *
+     * @throws BusinessException 未开启多租户或非平台超管身份时抛出 {@code 403}
+     */
+    public void requirePlatformSuperAdminSwitchAccess() {
+        if (!isMultiTenantEnabled()) {
+            throw new BusinessException(CommonResultCode.FORBIDDEN, "当前系统未开启多租户模式");
+        }
+        if (SaManager.getSaTokenContext().isValid()) {
+            String ownerTenantId = LoginHelper.getTenantId(SolidConstants.ADMIN_LOGIN_TYPE);
+            boolean superAdmin = LoginHelper.isSuperAdmin(SolidConstants.ADMIN_LOGIN_TYPE);
+            if (!Objects.equals(SolidConstants.PLATFORM_TENANT_ID_STR, ownerTenantId) || !superAdmin) {
+                throw new BusinessException(CommonResultCode.FORBIDDEN, "仅平台超级管理员允许查询租户切换选项");
+            }
+            return;
+        }
+        requirePlatformTenantId();
+    }
+
+    /**
      * 解析路径传入的逗号分隔雪花主键串并去重。
      *
      * @param ids 逗号分隔的主键列表字符串（如 {@code "1,2,3"}）
@@ -102,6 +136,17 @@ public class SystemContextSupport {
      * @throws BusinessException 字符串为空或包含非法/非正主键值时抛出 {@code 400}
      */
     public static List<Long> parsePathIds(String ids) {
+        return parsePathIds(ids, false);
+    }
+
+    /**
+     * 解析路径传入的逗号分隔主键串并去重，支持显式控制是否允许平台保留主键 {@code 0}（用于触发 {@code 102003} 语义拦截）。
+     *
+     * @param ids       逗号分隔的主键列表字符串
+     * @param allowZero 是否允许解析主键 {@code 0}
+     * @return 去重后的有效主键列表
+     */
+    public static List<Long> parsePathIds(String ids, boolean allowZero) {
         if (!StringUtils.hasText(ids)) {
             throw new BusinessException(CommonResultCode.BAD_REQUEST, "目标主键标识列表不能为空");
         }
@@ -117,8 +162,8 @@ public class SystemContextSupport {
             } catch (NumberFormatException ex) {
                 throw new BusinessException(CommonResultCode.BAD_REQUEST, "目标主键标识必须为有效数字", ex);
             }
-            if (value <= 0L) {
-                throw new BusinessException(CommonResultCode.BAD_REQUEST, "目标主键标识必须为正整数");
+            if (allowZero ? value < 0L : value <= 0L) {
+                throw new BusinessException(CommonResultCode.BAD_REQUEST, "目标主键标识格式不合法");
             }
             parsed.add(value);
         }
@@ -272,5 +317,26 @@ public class SystemContextSupport {
      */
     public static <T> List<T> safeList(List<T> values) {
         return CollectionUtils.isEmpty(values) ? Collections.emptyList() : values;
+    }
+
+    /**
+     * 对主键集合执行去重与正整数校验（空集合返回不可变空列表，任一项非正抛出 {@code 100001}）。
+     *
+     * @param rawIds     原始主键集合
+     * @param invalidMsg 含无效主键时的提示信息
+     * @return 去重且保序的正整数主键列表
+     */
+    public static List<Long> deduplicatePositiveIds(Collection<Long> rawIds, String invalidMsg) {
+        if (CollectionUtils.isEmpty(rawIds)) {
+            return Collections.emptyList();
+        }
+        Set<Long> unique = new LinkedHashSet<>(rawIds.size());
+        for (Long id : rawIds) {
+            if (id == null || id <= 0L) {
+                throw new BusinessException(CommonBizResultCode.PARAM_INVALID, invalidMsg);
+            }
+            unique.add(id);
+        }
+        return new ArrayList<>(unique);
     }
 }

@@ -224,11 +224,8 @@ public class RoleAuthorizationSupport {
             if (tenant.getExpireTime() != null && !tenant.getExpireTime().isAfter(LocalDateTime.now())) {
                 return Collections.emptySet();
             }
-            SysTenantPackage pkg = sysTenantPackageMapper.selectOne(
-                    Wrappers.<SysTenantPackage>lambdaQuery()
-                            .eq(SysTenantPackage::getId, tenant.getPackageId())
-                            .eq(SysTenantPackage::getStatus, CommonStatusEnum.NORMAL.getCode())
-            );
+            // 停用套餐不影响存量已绑定租户继续维护其现有菜单权限
+            SysTenantPackage pkg = sysTenantPackageMapper.selectById(tenant.getPackageId());
             if (pkg == null) {
                 return Collections.emptySet();
             }

@@ -252,4 +252,35 @@ public interface SysUserMapper extends AtengBaseMapper<SysUser> {
             @Param("tenantId") Long tenantId,
             @Param("encryptedEmails") Collection<String> encryptedEmails
     );
+
+    /**
+     * 按租户主键批量统计未删除用户数量（专供平台租户分页配额已用量展示，杜绝 N+1）。
+     *
+     * @param tenantIds 租户主键集合
+     * @return 按租户主键聚合的活跃用户计数列表
+     */
+    @Results({
+            @Result(column = "group_id", property = "groupId"),
+            @Result(column = "row_count", property = "rowCount")
+    })
+    @Select("""
+            <script>
+            SELECT tenant_id AS group_id, COUNT(1) AS row_count
+            FROM sys_user
+            WHERE deleted = 0
+              <choose>
+                <when test="tenantIds != null and !tenantIds.isEmpty()">
+                  AND tenant_id IN
+                  <foreach collection="tenantIds" item="id" open="(" separator="," close=")">
+                    #{id}
+                  </foreach>
+                </when>
+                <otherwise>
+                  AND 1 = 0
+                </otherwise>
+              </choose>
+            GROUP BY tenant_id
+            </script>
+            """)
+    List<GroupCountRow> selectUserCountsByTenantIds(@Param("tenantIds") Collection<Long> tenantIds);
 }
