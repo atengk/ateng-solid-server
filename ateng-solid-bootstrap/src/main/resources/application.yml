@@ -118,3 +118,8 @@ ateng:
     cache:
       dict-ttl: 30m
       config-ttl: 30m
+
+logging:
+  charset:
+    console: UTF-8
+    file: UTF-8
