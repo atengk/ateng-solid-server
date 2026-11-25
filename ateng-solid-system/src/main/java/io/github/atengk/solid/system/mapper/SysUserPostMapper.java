@@ -64,4 +64,22 @@ public interface SysUserPostMapper extends AtengBaseMapper<SysUserPost> {
             </script>
             """)
     List<Long> selectReferencedPostIds(@Param("tenantId") Long tenantId, @Param("postIds") List<Long> postIds);
+
+    /**
+     * 查询指定租户下用户关联的未删除岗位主键列表。
+     *
+     * @param tenantId 租户主键
+     * @param userId   用户主键
+     * @return 岗位主键列表
+     */
+    @Select("""
+            SELECT up.post_id
+            FROM sys_user_post up
+            INNER JOIN sys_post p ON p.id = up.post_id AND p.tenant_id = up.tenant_id
+            WHERE up.tenant_id = #{tenantId}
+              AND up.user_id = #{userId}
+              AND p.deleted = 0
+            ORDER BY p.sort ASC, p.id ASC
+            """)
+    List<Long> selectPostIdsByUserId(@Param("tenantId") Long tenantId, @Param("userId") Long userId);
 }

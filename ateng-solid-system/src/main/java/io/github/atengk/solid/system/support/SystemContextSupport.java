@@ -1,15 +1,19 @@
 package io.github.atengk.solid.system.support;
 
+import cn.dev33.satoken.SaManager;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.context.TenantContextHolder;
+import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.PageResult;
+import io.github.atengk.boot.satoken.util.LoginHelper;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
 import io.github.atengk.solid.common.properties.SolidTenantProperties;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -29,6 +33,7 @@ import java.util.regex.Pattern;
  * @author Ateng
  * @since 2026-11-25
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class SystemContextSupport {
@@ -216,6 +221,46 @@ public class SystemContextSupport {
                 ? Collections.emptyList()
                 : source.stream().map(mapper).toList();
         return PageResult.of(mapped, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
+    }
+
+    /**
+     * 安全解析当前操作人用户主键（优先读取 {@link UserContextHolder#getExplicit()}，再在 Sa-Token 上下文有效时读取登录态）。
+     *
+     * @return 当前操作人用户主键；无有效登录态时返回 {@code null}
+     */
+    public Long resolveCurrentActorUserId() {
+        String explicitUserId = UserContextHolder.getExplicit();
+        if (StringUtils.hasText(explicitUserId)) {
+            try {
+                return Long.parseLong(explicitUserId.trim());
+            } catch (NumberFormatException ex) {
+                log.debug("忽略无法解析为长整型的 ThreadLocal 用户上下文值: {}", explicitUserId, ex);
+                return null;
+            }
+        }
+        if (SaManager.getSaTokenContext().isValid()) {
+            try {
+                return LoginHelper.getUserIdAsLong(SolidConstants.ADMIN_LOGIN_TYPE);
+            } catch (RuntimeException ex) {
+                log.debug("当前 Sa-Token 上下文未绑定有效管理员会话: {}", ex.getMessage());
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 强制解析当前登录操作人用户主键，未登录时统一抛出 {@code 401}。
+     *
+     * @return 当前登录用户主键
+     * @throws BusinessException 当前请求未登录时抛出 {@code 401}
+     */
+    public Long requireCurrentActorUserId() {
+        Long userId = resolveCurrentActorUserId();
+        if (userId == null) {
+            throw new BusinessException(CommonResultCode.UNAUTHORIZED, "未识别当前登录操作人身份");
+        }
+        return userId;
     }
 
     /**

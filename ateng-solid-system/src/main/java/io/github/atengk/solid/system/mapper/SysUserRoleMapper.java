@@ -82,4 +82,52 @@ public interface SysUserRoleMapper extends AtengBaseMapper<SysUserRole> {
             </script>
             """)
     List<Long> selectReferencedRoleIds(@Param("tenantId") Long tenantId, @Param("roleIds") List<Long> roleIds);
+
+    /**
+     * 查询指定租户下用户已分配的有效角色主键列表。
+     *
+     * @param tenantId 租户主键
+     * @param userId   用户主键
+     * @return 角色主键列表
+     */
+    @Select("""
+            SELECT ur.role_id
+            FROM sys_user_role ur
+            INNER JOIN sys_role r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+            WHERE ur.tenant_id = #{tenantId}
+              AND ur.user_id = #{userId}
+              AND r.deleted = 0
+            ORDER BY r.sort ASC, r.id ASC
+            """)
+    List<Long> selectRoleIdsByUserId(@Param("tenantId") Long tenantId, @Param("userId") Long userId);
+
+    /**
+     * 批量识别目标用户集合中持有内置超级管理员角色的用户主键列表（用于行保护置灰与越权拦截）。
+     *
+     * @param tenantId 租户主键
+     * @param userIds  待识别的用户主键集合
+     * @return 持有超级管理员角色的用户主键列表
+     */
+    @Select("""
+            <script>
+            SELECT DISTINCT ur.user_id
+            FROM sys_user_role ur
+            INNER JOIN sys_role r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+            WHERE ur.tenant_id = #{tenantId}
+              AND r.deleted = 0
+              AND (r.id = 1 OR r.role_key = 'super_admin')
+              <choose>
+                <when test="userIds != null and !userIds.isEmpty()">
+                  AND ur.user_id IN
+                  <foreach collection="userIds" item="userId" open="(" separator="," close=")">
+                    #{userId}
+                  </foreach>
+                </when>
+                <otherwise>
+                  AND 1 = 0
+                </otherwise>
+              </choose>
+            </script>
+            """)
+    List<Long> selectSuperAdminUserIds(@Param("tenantId") Long tenantId, @Param("userIds") java.util.Collection<Long> userIds);
 }
