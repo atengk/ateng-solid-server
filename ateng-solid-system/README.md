@@ -1,10 +1,10 @@
 # ateng-solid-system 系统管理域核心业务实现模块
 
-> 一句话定位：实现 `ateng-solid-system-api` 全部跨模块契约并承载组织权限、5 级 `@DataScope` 数据权限引擎、多租户、静态枚举/动态字典、系统参数、审计落库及 `db/migration/system/` Flyway 脚本（接口前缀 `/admin/system/**`）；当前已完成 `Spec 1` 基础设施基线、`Spec 2` 认证安全契约底座、`Spec 3` 组织架构（部门/岗位）/权限树（菜单/角色）/`@DataScope` 与 `Spec 4` 静态枚举接管、动态字典/系统参数缓存及操作/登录只读审计，用户全功能及多租户 CRUD 将于后续工单逐步落地。
+> 一句话定位：实现 `ateng-solid-system-api` 全部跨模块契约并承载组织权限、用户与 500 行并发 Excel 导入导出、5 级 `@DataScope` 数据权限引擎、可开关 SaaS 多租户与套餐、静态枚举/动态字典、系统参数、审计落库及 `db/migration/system/` Flyway 脚本（接口前缀 `/admin/system/**`）；`Spec 1 ~ Spec 4` 全量能力均已落地并通过离线单测与集成测试。
 
 ---
 
-## 0. 对外契约、核心引擎与持久化全景速查 (`Spec 1 ~ Spec 4`)
+## 0. 对外契约、核心引擎与持久化全景速查 (`Spec 1 ~ Spec 4` 全量基线)
 
 | 能力域 | 产物 / 入口 | 核心机制 / SPI / 配置键 | 核心输入 / 输出与边界约定 | 锚定验证测试 (`*Test.java`) |
 | :--- | :--- | :--- | :--- | :--- |
@@ -26,6 +26,9 @@
 | 用户远程服务与头像引擎 | [`RemoteUserServiceImpl`](./src/main/java/io/github/atengk/solid/system/service/remote/RemoteUserServiceImpl.java) · [`AvatarStorageHelper`](./src/main/java/io/github/atengk/solid/system/support/AvatarStorageHelper.java) · [`AvatarUrlResolver`](./src/main/java/io/github/atengk/solid/system/support/AvatarUrlResolver.java) | `RemoteUserService` · `StorageOperations` · `StorageGuard` | 超管跨租户切换摘要解析；空白转 `NULL`/冲突抛 `102002`；头像强魔数守卫 `100004` + 回滚删除 + 2h `inline` 预签名 | [`AvatarUrlResolverTest`](./src/test/java/io/github/atengk/solid/system/support/AvatarUrlResolverTest.java) · [`RemoteServicesIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/RemoteServicesIntegrationTest.java) |
 | 联系字段确定性加密与可选 Redis 开关 | [`ContactFieldCrypto`](./src/main/java/io/github/atengk/solid/system/support/ContactFieldCrypto.java) · [`RedisActivationResolver`](./src/main/java/io/github/atengk/solid/system/support/RedisActivationResolver.java) | `ateng.boot.mybatis-plus.crypto.secret-key` · `ateng.boot.redis.enabled` | 空白转 `null`/邮箱小写归一化与单值批量确定性加密；`redis.enabled=false` 时统一抑制误连 `localhost:6379` | [`ContactFieldCryptoTest`](./src/test/java/io/github/atengk/solid/system/support/ContactFieldCryptoTest.java) · [`ContactFieldEncryptPersistenceTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ContactFieldEncryptPersistenceTest.java) |
 | 登录审计落库与异步监听 | [`RemoteAuditLogServiceImpl`](./src/main/java/io/github/atengk/solid/system/service/remote/RemoteAuditLogServiceImpl.java) · [`LoginAuditEventListener`](./src/main/java/io/github/atengk/solid/system/listener/LoginAuditEventListener.java) | `RemoteAuditLogService` · `@Async @EventListener` (`LoginAuditEvent`) | 按 `eventId` 执行 24h 幂等去重；解析浏览器/OS；仅登录成功同步回写最近登录 IP 与时间 | [`RemoteServicesIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/RemoteServicesIntegrationTest.java) |
+| 用户管理与配额守卫 (`/admin/system/user`) | [`SysUserController`](./src/main/java/io/github/atengk/solid/system/controller/SysUserController.java) · [`SysUserService`](./src/main/java/io/github/atengk/solid/system/service/SysUserService.java) · [`SysUserQueryService`](./src/main/java/io/github/atengk/solid/system/service/SysUserQueryService.java) · [`TenantQuotaGuard`](./src/main/java/io/github/atengk/solid/system/support/TenantQuotaGuard.java) · [`UserRelationSupport`](./src/main/java/io/github/atengk/solid/system/support/UserRelationSupport.java) | `/page`（部门子树 + 密文手机号精确查）、`/options`（`@SaCheckLogin`）、`/{id}`、`POST`、`PUT`、`/{id}/status`、`/{id}/reset-password`、`DELETE /{ids}` · `system:user:*` | 受 5 级 `@DataScope` 读写隔离；事务外 `PasswordUtil.hash` + 悲观行锁 `PessimisticLockUtil.forUpdate` 防超卖（`102006`）；内置超管与自身禁停删/降权（`102007`）；提交后清理权限缓存并强退会话 | [`SysUserCrudAndDataScopeTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SysUserCrudAndDataScopeTest.java) |
+| 用户 Excel 导入导出 (`/admin/system/user/{import,export}`) | [`SysUserImportExportController`](./src/main/java/io/github/atengk/solid/system/controller/SysUserImportExportController.java) · [`SysUserExcelService`](./src/main/java/io/github/atengk/solid/system/service/SysUserExcelService.java) · [`UserImportValidator`](./src/main/java/io/github/atengk/solid/system/service/UserImportValidator.java) · [`UserBatchPersistHelper`](./src/main/java/io/github/atengk/solid/system/service/UserBatchPersistHelper.java) · [`ImportFeedbackStore`](./src/main/java/io/github/atengk/solid/system/support/ImportFeedbackStore.java) | `/import/template`、`POST /import`、`GET /import/feedback/{feedbackToken}`、`POST /export` · `ateng.solid.user.*` | 9 列模板（`UserImportDTO`）；三段式并发流水（无事务全量校验 ➔ `Semaphore(2)` + `password-hash` 并行哈希 ➔ 短事务批插）；`ImportResultVO` 剔除 `rowData` 与 15m 归属隔离批注下载；9 列流式 `@ExcelSensitive` 导出 | [`ImportFeedbackStoreTest`](./src/test/java/io/github/atengk/solid/system/support/ImportFeedbackStoreTest.java) · [`SysUserExcelImportIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SysUserExcelImportIntegrationTest.java) |
+| 可开关 SaaS 租户与套餐 (`/admin/system/{tenant,tenant-package}`) | [`SysTenantController`](./src/main/java/io/github/atengk/solid/system/controller/SysTenantController.java) · [`SysTenantService`](./src/main/java/io/github/atengk/solid/system/service/SysTenantService.java) · [`TenantInitializationSupport`](./src/main/java/io/github/atengk/solid/system/support/TenantInitializationSupport.java) · [`SysTenantPackageController`](./src/main/java/io/github/atengk/solid/system/controller/SysTenantPackageController.java) · [`SysTenantPackageService`](./src/main/java/io/github/atengk/solid/system/service/SysTenantPackageService.java) · [`TenantPackageMenuSyncSupport`](./src/main/java/io/github/atengk/solid/system/support/TenantPackageMenuSyncSupport.java) | `/tenant/{page,options,{id},{id}/status,{ids}}` · `/tenant-package/{page,options,shrink-preview,{id},{id}/status,{ids}}` | 仅 `tenant.enabled=true` 且平台租户 `0` 可维护（否则抛 `403`）；4 步原子初始化（`saveParams=false`）；保护租户 `0`（`102003`）；套餐拦截 `platform_only`/停用菜单（`102006`）与绑定禁删（`102005`），缩减原子裁剪跨租户 `sys_role_menu` | [`SysTenantToggleGuardTest`](./src/test/java/io/github/atengk/solid/system/support/SysTenantToggleGuardTest.java) · [`TenantAndPackageIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/TenantAndPackageIntegrationTest.java) |
 
 ---
 
@@ -50,8 +53,8 @@ flowchart LR
     SaToken["AtengSaTokenInterceptor / CachedStpInterface"] --> SwitchSPI["TenantHeaderSwitchValidatorImpl (100002)"]
     SaToken --> PermSPI["SolidUserRolePermissionLoader (3参)"]
     MP["AtengDataPermissionInnerInterceptor"] --> DataPerm["SolidDataPermissionHandler (ObjectProvider<Mapper> · Fail-Closed)"]
-    WebCtrl["Sys{Dept,Post,Menu,Role}Controller"] --> AppSvc["Query/Write Service ➔ TransactionUtil.executeAfterCommit"]
-    AppSvc --> Cache["PermissionCacheService (3参 clearRoleCache/clearUserCache · clearAll)"]
+    WebCtrl["Sys{Dept,Post,Menu,Role,User,Tenant,TenantPackage}Controller"] --> AppSvc["Query/Write Service ➔ TransactionUtil.executeAfterCommit"]
+    AppSvc --> Cache["PermissionCacheService · TenantStatusCache · LoginHelper.kickout*"]
 ```
 
 - **动态路由菜单四重剪枝顺序**：归属租户校验（非超管禁跨租户）➔ 非平台租户状态及激活套餐校验 ➔ 全量树自顶向下级联剪枝（停用祖先、`platform_only=1`、单租户模式隐藏 `3000` 多租户治理目录）➔ 剥离 `F` 按钮并裁剪空 `M` 目录。
@@ -306,6 +309,87 @@ TenantContextHolder.runWithTenant(effectiveTenantId, () -> sysOperLogMapper.inse
 - **防崩溃与敏感堆栈截断**：`SystemContextSupport#sanitizeAuditErrorMsg` 对包含 Java 异常类名/堆栈与原始 SQL 的错误信息替换为安全提示，长字段（`requestParams`、`responseResult`、`extraJson`）截断上限 `16,000` 字符防止超过 `TEXT` 列阈值导致审计丢失，落库异常就地记录并隔离绝不波及业务请求。
 - **严格只读分页查询**：`SysLogController` 零增删改端点（`DELETE` 等返回 `405`），按工作租户严格隔离、起止时间逆序检验（`100001`）与发生时间/主键倒序分页输出。
 
+### 3.9 用户管理 CRUD、悲观行锁配额守卫与三段式 500 行 Excel 导入导出
+
+**1. 专属配置与控制器路由总览**
+
+```yaml
+ateng:
+  solid:
+    user:
+      import-max-rows: 500        # 单次 Excel 批量导入允许最大数据行数（超限抛 100005）
+      max-concurrent-imports: 2   # 并发导入信号量许可数（排队超 3s 抛 429）
+      import-feedback-ttl: 15m    # 标红批注工作簿暂存 TTL
+```
+
+```
+GET/POST/PUT/DELETE  /admin/system/user/{page,options,{id},{id}/status,{id}/reset-password,{ids}}
+GET/POST             /admin/system/user/{import/template,import,import/feedback/{feedbackToken},export}
+```
+
+**2. 三段式并发导入流水线（提取自 [`SysUserExcelService`](./src/main/java/io/github/atengk/solid/system/service/SysUserExcelService.java)）**
+
+```java
+// 1. 阶段 1（无事务）：全量校验并统计总数据行数，任一出错立即渲染标红批注后返回，绝不触发耗时 PBKDF2 计算
+ValidationOutcome outcome = userImportValidator.validate(
+        tenantId, allowSuperAdminAssign, readResult, importMaxRows
+);
+if (!outcome.errors().isEmpty()) {
+    return buildErrorFeedbackResult(
+            tenantId, operatorUserId, originalFilename, fileBytes, outcome.totalCount(), outcome.errors()
+    );
+}
+
+// 2. 阶段 2（无事务）：先读取强口令，再通过信号量限流与有界平台池并行计算每行独立随机盐哈希
+String initPassword = userContactAndDictSupport.resolveAndValidatePassword(tenantId, null);
+List<PreparedImportUser> preparedUsers = computeHashesInParallel(outcome.validRows(), initPassword);
+
+// 3. 阶段 3（短事务）：加租户悲观行锁复核配额并批量落库
+int successCount = userBatchPersistHelper.persistBatch(tenantId, preparedUsers);
+```
+
+**3. 边界与防御**
+- **5 级 `@DataScope` 读写隔离与内置保护（`SysUserService` / `SysUserQueryService`）**：`/page` 展开所选部门子树集合并用确定性密文 `ContactFieldCrypto.encryptPhoneForQuery` 精确检索 11 位手机号；`/options` 面向部门负责人等选人场景以 `@SaCheckLogin` 放行并屏蔽明文联系方式与密码；修改/切换状态/重置密码/删除先经 `selectUserByIdWithDataScope` 校验操作者可见范围（未命中抛 `102001`），并严格阻断停用/删除平台内置超管与当前登录用户本人、阻止非本人重置超管密码及防止用户自编辑剥离自身绑定角色或分配 `super_admin`（`102007` / `102006`）。
+- **悲观行锁防超卖（`TenantQuotaGuard`）**：新增用户、停用转启用用户与批量导入阶段 3 必须在活跃写事务内调用 `assertQuotaAvailable`，通过 `PessimisticLockUtil.forUpdate` 锁定 `sys_tenant` 目标行后再统计租户现有用户数与 `account_count`（`<= 0` 如 `-1` 表示不限，超额抛 `102006`）；新增用户、`resetPassword` 与导入接口均于事务外调用 `PasswordUtil.hash`，且审计注解显式声明 `saveParams = false`、`exportUsers` 声明 `saveResult = false`。
+- **三段式导入与双模批注隔离（`UserImportValidator` / `ImportFeedbackStore`）**：上传文件严格限制 `.xlsx` 且 `<= 2MB`；阶段 1 一次性装载账号/密文手机/密文邮箱集合、部门同名与 `/` 全路径索引（`ImportDeptPathResolver`）、岗位/角色编码字典与动态性别字典 `sys_user_gender` 消除循环 N+1，并实施无锁配额预检 `checkQuotaPreview`；存在错误时剥离 `ExcelErrorRow.rowData` 返回 `ImportResultVO` 并将标红批注工作簿暂存为 Redis `meta`/`bin` 双 Key（或本地 50 条 LRU 上限，4MB 上限），下载端点强制核验 `tenantId` 与 `operatorUserId` 归属（越权 `403`、不存在/过期 `404`）；阶段 2 使用 `Semaphore`（默认 `2`，超时 `3s` 抛 `429`）+ `password-hash` 平台线程池（等待上限 `90s`）；流式导出通过 `@ExcelSensitive` 自动脱敏手机与邮箱并排除密码列。
+
+### 3.10 可开关 SaaS 多租户 4 步初始化与租户套餐跨租户裁剪
+
+**1. 专属开关与控制器路由总览**
+
+```yaml
+ateng:
+  solid:
+    tenant:
+      enabled: false          # false 时 TenantController 与 TenantPackageController 全量接口统一抛出 403
+      status-cache-ttl: 60s   # 停/删/更新租户后于 TransactionUtil.executeAfterCommit 精准驱逐缓存
+```
+
+```
+GET/POST/PUT/DELETE  /admin/system/tenant/{page,options,{id},{id}/status,{ids}}
+GET/POST/PUT/DELETE  /admin/system/tenant-package/{page,options,shrink-preview,{id},{id}/status,{ids}}
+```
+
+**2. 4 步原子初始化短事务（提取自 [`TenantInitializationSupport`](./src/main/java/io/github/atengk/solid/system/support/TenantInitializationSupport.java)）**
+
+```java
+// 1. 插入 sys_tenant 并获取新分配的雪花租户主键
+// 2. 切入新租户上下文创建根部门
+// 3. 创建默认 tenant_admin 角色并写入套餐有效非平台专属菜单授权
+// 4. 创建初始租户管理员账号（pwd_update_time 为空）并绑定角色
+TenantContextHolder.runWithTenant(newTenantId, () -> {
+    SysDept rootDept = insertRootDept(newTenantId, command.tenantName());
+    SysRole tenantAdminRole = insertTenantAdminRole(newTenantId);
+    insertRoleMenus(newTenantId, tenantAdminRole.getId(), command.packageMenuIds());
+    insertTenantAdminUser(newTenantId, rootDept.getId(), tenantAdminRole.getId(), command);
+});
+```
+
+**3. 边界与防御**
+- **双开关与平台租户 `0` 双重门禁**：`SystemContextSupport#requireMultiTenantPlatformAccess` 与 `requirePlatformSuperAdminSwitchAccess` 强制要求 `ateng.solid.tenant.enabled = true` 且未切出平台默认租户 `0`（`/options` 同步校验 `ownerTenantId == "0"` 且具备 `super_admin` 角色），单租户关闭态或跨租户观察态访问一律拒绝 `403`；停用或删除平台内置 `0` 号租户、篡改其 `tenantCode`/`packageId`/`expireTime`/`accountCount` 一律触发 `102003`（`0` 号仅允许维护 `tenantName` 与 `remark`），普通租户建后锁定只读 `tenantCode`。
+- **零明文泄漏与停删会话强退**：`SysTenantController#create` 标注 `@OperateLog(..., saveParams = false)`，在事务外先通过 `PasswordPolicyValidator` 校验与 `PasswordUtil.hash` 计算后进入短事务落库 `CreateTenantVO`；租户被停用或删除时，在 `TransactionUtil.executeAfterCommit` 驱逐 `TenantStatusCache` 并分页扫描 `LoginHelper.searchOnlineUserPage` 对该租户全部在线 `admin` 会话执行 `kickoutByTokenForTenant`。
+- **租户套餐防越权与跨租户原子裁剪（`SysTenantPackageService` / `TenantPackageMenuSyncSupport`）**：新增/编辑套餐严禁勾选 `platform_only = true` 或停用态菜单（越界抛 `102006`）；删除套餐前通过 `SysTenantMapper#selectTenantCountsByPackageIds` 校核引用，仍被未删除租户绑定即整批拦截（`102005`）；停用套餐不影响已绑定存量租户继续使用，仅禁止新租户或换套餐新选；编辑套餐缩减菜单或租户更换为更窄套餐时，`POST /shrink-preview` 提供影响租户与移除菜单标题只读预览，确认保存则在事务内调用 `pruneRoleMenusForTenants`（自动向上保留半选态活跃祖先目录 `M` 防误删半选授权），随后提交后触发 `permissionCacheService.clearAll()` 全清权限缓存。
+
 ---
 
 ## 4. 扩展点 (SPI) 与非功能防线
@@ -345,16 +429,19 @@ TenantContextHolder.runWithTenant(effectiveTenantId, () -> sysOperLogMapper.inse
 | `100002` | `CommonBizResultCode.INVALID_TENANT_SWITCH` | 跨租户头 `X-Tenant-Id` 目标不存在、已停用、已过期、匿名带头或单租户模式越权切租户 |
 | `100003` | `CommonBizResultCode.DATA_SCOPE_ERROR` | `@DataScope` 解析后可见部门数超过 `ateng.solid.data-scope.max-dept-in-size` 上限 |
 | `100004` | `CommonBizResultCode.FILE_GUARD_REJECTED` | 上传头像为空、非 `jpg/jpeg/png/webp`、超 2MB 或魔数不匹配 |
-| `102001` | `SystemResultCode.RECORD_NOT_FOUND` | 目标部门、岗位、菜单、角色、用户、租户、字典或系统参数/日志记录不存在 |
-| `102002` | `SystemResultCode.DUPLICATE_RESOURCE` | 同级部门重名、同租户岗位编码/名称重复、路由组件名重复、角色编码/名称重复、字典类型/值重复、同租户参数键名重复或手机号/邮箱冲突 |
+| `100005` | `CommonBizResultCode.EXCEL_VALIDATION_FAILED` | 用户 Excel 导入文件为空、非 `.xlsx`、超 2MB、解析损坏、表头缺失或有效数据超出 `import-max-rows`（500 行） |
+| `102001` | `SystemResultCode.RECORD_NOT_FOUND` | 目标部门、岗位、菜单、角色、用户、租户、租户套餐、字典或系统参数/日志记录不存在 |
+| `102002` | `SystemResultCode.DUPLICATE_RESOURCE` | 同级部门重名、同租户岗位/角色/用户账号编码或名称重复、路由组件名重复、租户编码或套餐名称重复、字典类型/值重复、同租户参数键名重复或手机号/邮箱冲突 |
+| `102003` | `SystemResultCode.PLATFORM_TENANT_PROTECTED` | 试图停用、删除或篡改平台内置默认租户（`id = 0`）的编码、状态、套餐、有效期或账号配额上限 |
 | `102004` | `SystemResultCode.RESERVED_ROLE_KEY` | 创建或修改角色使用保留编码 `super_admin` 或 `admin` |
-| `102005` | `SystemResultCode.RESOURCE_IN_USE` | 停用含未停用子部门；删除仍存在子节点、活跃用户或未删字典明细的部门/岗位/菜单/角色/字典类型 |
-| `102006` | `SystemResultCode.TENANT_QUOTA_OR_SCOPE_EXCEEDED` | 普通租户角色授权越界勾选套餐外或 `platform_only=true` 菜单、单租户授予多租户治理菜单 |
-| `102007` | `SystemResultCode.SYSTEM_BUILTIN_PROTECTED` | 试图编辑、停用、变更数据范围或删除平台内置 `super_admin` 角色，或删除/改键/降级内置参数（`configType='Y'`） |
+| `102005` | `SystemResultCode.RESOURCE_IN_USE` | 停用含未停用子部门；删除仍存在子节点、活跃用户、已绑定租户或未删字典明细的部门/岗位/菜单/角色/租户套餐/字典类型 |
+| `102006` | `SystemResultCode.TENANT_QUOTA_OR_SCOPE_EXCEEDED` | 超出当前租户 `account_count` 账号配额上限、套餐越权勾选 `platform_only=true`/停用菜单、普通租户角色勾选套餐外菜单或导入指定 `super_admin` 角色 |
+| `102007` | `SystemResultCode.SYSTEM_BUILTIN_PROTECTED` | 试图编辑/停用/删除/变更平台内置 `super_admin` 角色、停用或删除内置超管用户/当前登录用户本人、非本人重置超管密码、篡改自身绑定角色，或删除/改键/降级内置参数（`configType='Y'`） |
 
 ### 5.3 关联文档
 
 - 领域词汇表：[`CONTEXT.md`](./CONTEXT.md)
+- 同源双装配守则：[cloud-readiness.md](../docs/agents/cloud-readiness.md)
 - 接口与错误码明细：[api-and-error-codes-spec.md](../docs/specs/api-and-error-codes-spec.md)
 - 数据库与 Flyway 规范：[database-and-flyway-spec.md](../docs/specs/database-and-flyway-spec.md)
 - 认证、RBAC 与 `@DataScope` 规范：[auth-rbac-and-datascope-spec.md](../docs/specs/auth-rbac-and-datascope-spec.md)

@@ -6,7 +6,7 @@
 
 ## 1. 工程定位与 5 模块拓扑
 
-- **架构形态**：Java 21 LTS（虚拟线程）+ Spring Boot `3.3.13` + Maven 多模块（导入 `ateng-boot-bom:1.2.0`+）。
+- **架构形态**：Java 21 LTS（虚拟线程）+ Spring Boot + `ateng-boot` Maven 多模块（精确依赖版本见 [父 POM](./pom.xml)）。
 - **Maven 模块划分**（`groupId: io.github.atengk`，基础包名 `io.github.atengk.solid.*`）：
   1. `ateng-solid-common`：全局常量、通用错误码（`100xxx`）、基础枚举与上下文辅助；
   2. `ateng-solid-system-api`：系统域纯 Java 契约接口（`Remote*Service`）、跨模块 DTO/VO 与错误码（`102xxx`）；
@@ -28,8 +28,8 @@
 
 ## 3. 运行环境、规范文档与测试
 
-- **运行基线**：OpenJDK 21 LTS + Apache Maven 3.9+ + MySQL 8.x / Redis 7.x（Schema 演进采用 `ateng-boot-flyway`）。
-- **双模配置**：本地连接外部 MySQL / Redis 时配置于被 `.gitignore` 忽略的 `application-local.yml`（参照 `application-local.example.yml`）；单测与集成测试依托 H2（`MODE=MySQL`）与内存降级 100% 离线自洽。
+- **运行基线**：OpenJDK 21 LTS + Apache Maven 3.9+ + MySQL 8.4 LTS / Redis 8.x（Schema 演进采用 `ateng-boot-flyway`）。
+- **双模配置**：本地连接外部 MySQL / Redis / S3 对象存储时配置于被 `.gitignore` 忽略的 `application-local.yml`（参照 `application-local.example.yml`）；单测与集成测试依托 H2（`MODE=MySQL`）与内存降级 100% 离线自洽。
 - **核心规范入口**：
   - 独立开发行为准则：[`AGENTS.md`](./AGENTS.md)
   - 底层缺口即停工与联调 SOP（同步副本）：[`docs/agents/foundation-first-gate.md`](./docs/agents/foundation-first-gate.md)
@@ -40,7 +40,7 @@
   - 后端 AI 全景索引：[`llms.txt`](./llms.txt)
   - 上下文地图：[`CONTEXT-MAP.md`](./CONTEXT-MAP.md)
   - 架构决策记录：[`docs/adr/README.md`](./docs/adr/README.md)
-  - 详细工程规范：[`database-and-flyway-spec.md`](./docs/specs/database-and-flyway-spec.md) | [`auth-rbac-and-datascope-spec.md`](./docs/specs/auth-rbac-and-datascope-spec.md) | [`api-and-error-codes-spec.md`](./docs/specs/api-and-error-codes-spec.md) | [`configuration-and-archunit-spec.md`](./docs/specs/configuration-and-archunit-spec.md)
+  - 详细工程规范：[`database-and-flyway-spec.md`](./docs/specs/database-and-flyway-spec.md) | [`auth-rbac-and-datascope-spec.md`](./docs/specs/auth-rbac-and-datascope-spec.md) | [`api-and-error-codes-spec.md`](./docs/specs/api-and-error-codes-spec.md) | [`configuration-and-archunit-spec.md`](./docs/specs/configuration-and-archunit-spec.md) | [`system-engines-and-testing-spec.md`](./docs/specs/system-engines-and-testing-spec.md)
 
 ---
 
