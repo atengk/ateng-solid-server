@@ -21,6 +21,7 @@ import io.github.atengk.solid.system.mapper.SysRoleMenuMapper;
 import io.github.atengk.solid.system.mapper.SysTenantPackageMapper;
 import io.github.atengk.solid.system.mapper.SysTenantPackageMenuMapper;
 import io.github.atengk.solid.system.mapper.SysUserRoleMapper;
+import io.github.atengk.solid.system.support.MenuTreeSupport;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
@@ -45,15 +46,6 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class RemotePermissionServiceImpl implements RemotePermissionService {
-
-    /**
-     * V1.0.1 确定性种子约定的多租户治理顶级目录主键（与 {@code platform_only=1} 配合控制显隐）
-     */
-    private static final long TENANT_GOVERNANCE_DIR_ID = 3000L;
-    private static final String TENANT_ROOT_PATH = "/tenant";
-    private static final Set<String> TENANT_ROUTE_NAMES = Set.of("SysTenant", "SysTenantPackage");
-    private static final Set<String> TENANT_ROUTE_PATHS = Set.of("/system/tenant", "/system/tenant-package");
-    private static final String TENANT_PERMS_PREFIX = "system:tenant";
 
     private final SysUserRoleMapper sysUserRoleMapper;
     private final SysRoleMapper sysRoleMapper;
@@ -245,15 +237,7 @@ public class RemotePermissionServiceImpl implements RemotePermissionService {
                         .orderByAsc(SysMenu::getSort)
                         .orderByAsc(SysMenu::getId)
         ));
-        if (CollectionUtils.isEmpty(allMenus)) {
-            return Collections.emptyMap();
-        }
-        Map<Long, List<SysMenu>> grouped = new LinkedHashMap<>();
-        for (SysMenu menu : allMenus) {
-            Long parentId = menu.getParentId() != null ? menu.getParentId() : 0L;
-            grouped.computeIfAbsent(parentId, ignored -> new ArrayList<>()).add(menu);
-        }
-        return grouped;
+        return MenuTreeSupport.groupByParentId(allMenus);
     }
 
     private List<RouteMenuDTO> buildFilteredSubtree(Long parentId, MenuFilterContext ctx) {
@@ -303,21 +287,6 @@ public class RemotePermissionServiceImpl implements RemotePermissionService {
         }
     }
 
-    private static boolean isTenantGovernanceMenu(SysMenu menu) {
-        if (Objects.equals(menu.getId(), TENANT_GOVERNANCE_DIR_ID)) {
-            return true;
-        }
-        String path = menu.getPath();
-        if (TENANT_ROOT_PATH.equals(path) || (path != null && TENANT_ROUTE_PATHS.contains(path))) {
-            return true;
-        }
-        String name = menu.getName();
-        if (name != null && TENANT_ROUTE_NAMES.contains(name)) {
-            return true;
-        }
-        return StringUtils.hasText(menu.getPerms()) && menu.getPerms().trim().startsWith(TENANT_PERMS_PREFIX);
-    }
-
     private static RouteMenuDTO toRouteMenuDTO(SysMenu menu, List<RouteMenuDTO> children) {
         return RouteMenuDTO.builder()
                 .id(menu.getId())
@@ -353,7 +322,7 @@ public class RemotePermissionServiceImpl implements RemotePermissionService {
             if (!platformView && Boolean.TRUE.equals(menu.getPlatformOnly())) {
                 return false;
             }
-            return tenantEnabled || !isTenantGovernanceMenu(menu);
+            return tenantEnabled || !MenuTreeSupport.isTenantGovernanceMenu(menu);
         }
 
         private boolean isInPackage(Long menuId) {

@@ -35,4 +35,33 @@ public interface SysUserPostMapper extends AtengBaseMapper<SysUserPost> {
             ORDER BY p.sort ASC, p.id ASC
             """)
     List<String> selectActivePostNamesByUserId(@Param("tenantId") Long tenantId, @Param("userId") Long userId);
+
+    /**
+     * 批量统计当前租户下仍被未删除用户占用的岗位主键列表。
+     *
+     * @param tenantId 租户主键
+     * @param postIds  待检测的岗位主键集合
+     * @return 被活跃用户占用的岗位主键列表
+     */
+    @Select("""
+            <script>
+            SELECT DISTINCT up.post_id
+            FROM sys_user_post up
+            INNER JOIN sys_user u ON u.id = up.user_id AND u.tenant_id = up.tenant_id
+            WHERE up.tenant_id = #{tenantId}
+              AND u.deleted = 0
+              <choose>
+                <when test="postIds != null and !postIds.isEmpty()">
+                  AND up.post_id IN
+                  <foreach collection="postIds" item="postId" open="(" separator="," close=")">
+                    #{postId}
+                  </foreach>
+                </when>
+                <otherwise>
+                  AND 1 = 0
+                </otherwise>
+              </choose>
+            </script>
+            """)
+    List<Long> selectReferencedPostIds(@Param("tenantId") Long tenantId, @Param("postIds") List<Long> postIds);
 }

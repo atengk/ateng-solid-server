@@ -43,7 +43,7 @@ public interface SysUserRoleMapper extends AtengBaseMapper<SysUserRole> {
      * @return 启用中的角色列表
      */
     @Select("""
-            SELECT r.id, r.role_key, r.role_name
+            SELECT r.id, r.role_key, r.role_name, r.data_scope
             FROM sys_user_role ur
             INNER JOIN sys_role r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
             WHERE ur.tenant_id = #{tenantId}
@@ -53,4 +53,33 @@ public interface SysUserRoleMapper extends AtengBaseMapper<SysUserRole> {
             ORDER BY r.sort ASC, r.id ASC
             """)
     List<SysRole> selectActiveRolesByUserId(@Param("tenantId") Long tenantId, @Param("userId") Long userId);
+
+    /**
+     * 批量统计当前租户下仍被未删除用户占用的角色主键列表。
+     *
+     * @param tenantId 租户主键
+     * @param roleIds  待检测的角色主键集合
+     * @return 被活跃用户占用的角色主键列表
+     */
+    @Select("""
+            <script>
+            SELECT DISTINCT ur.role_id
+            FROM sys_user_role ur
+            INNER JOIN sys_user u ON u.id = ur.user_id AND u.tenant_id = ur.tenant_id
+            WHERE ur.tenant_id = #{tenantId}
+              AND u.deleted = 0
+              <choose>
+                <when test="roleIds != null and !roleIds.isEmpty()">
+                  AND ur.role_id IN
+                  <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
+                    #{roleId}
+                  </foreach>
+                </when>
+                <otherwise>
+                  AND 1 = 0
+                </otherwise>
+              </choose>
+            </script>
+            """)
+    List<Long> selectReferencedRoleIds(@Param("tenantId") Long tenantId, @Param("roleIds") List<Long> roleIds);
 }

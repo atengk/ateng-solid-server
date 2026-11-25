@@ -48,10 +48,11 @@ class OpaqueSessionHandleCodecTest {
         String rawToken = "satoken-admin-sample-token-123456";
         String handle = codec.encode("admin", "1001", rawToken);
 
-        // 1. 篡改任意字符破坏 GCM Tag 或密文
-        char lastChar = handle.charAt(handle.length() - 1);
-        char flipped = lastChar == 'A' ? 'B' : 'A';
-        String tampered = handle.substring(0, handle.length() - 1) + flipped;
+        // 1. 篡改任意非尾部填充比特位破坏 IV/密文/GCM Tag
+        int targetIndex = handle.length() / 2;
+        char targetChar = handle.charAt(targetIndex);
+        char flipped = targetChar == 'A' ? 'B' : 'A';
+        String tampered = handle.substring(0, targetIndex) + flipped + handle.substring(targetIndex + 1);
         assertBadRequest(() -> codec.decode("admin", "1001", tampered));
 
         // 2. 跨租户 AAD 不匹配

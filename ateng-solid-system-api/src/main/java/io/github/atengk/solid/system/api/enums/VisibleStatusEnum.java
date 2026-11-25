@@ -1,6 +1,7 @@
 package io.github.atengk.solid.system.api.enums;
 
 import io.github.atengk.boot.core.enums.IBaseEnum;
+import io.github.atengk.boot.core.util.EnumUtil;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
@@ -33,4 +34,14 @@ public enum VisibleStatusEnum implements IBaseEnum<Integer> {
      * 中文展示名称
      */
     private final String label;
+
+    /**
+     * 按数值编码解析菜单侧栏显隐状态。
+     *
+     * @param code 显隐状态编码（0=显示，1=隐藏）
+     * @return 匹配的枚举实例；未匹配或传入 {@code null} 时返回 {@code null}
+     */
+    public static VisibleStatusEnum fromCode(Integer code) {
+        return EnumUtil.fromCode(VisibleStatusEnum.class, code).orElse(null);
+    }
 }
