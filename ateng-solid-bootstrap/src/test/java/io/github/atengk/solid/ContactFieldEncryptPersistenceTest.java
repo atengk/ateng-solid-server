@@ -52,7 +52,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * @author Ateng
  * @since 2026-11-25
  */
-@SpringBootTest(classes = SolidApplication.class)
+@SpringBootTest(
+        classes = SolidApplication.class,
+        properties = {
+                "ateng.solid.init.enabled=false",
+                "spring.datasource.url=jdbc:h2:mem:contact_encrypt_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
+        }
+)
 @ActiveProfiles("test")
 class ContactFieldEncryptPersistenceTest {
 
