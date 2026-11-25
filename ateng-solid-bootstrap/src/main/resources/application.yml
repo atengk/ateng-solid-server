@@ -11,6 +11,10 @@ spring:
   threads:
     virtual:
       enabled: true
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 10MB
   jackson:
     time-zone: GMT+8
     date-format: yyyy-MM-dd HH:mm:ss
@@ -30,12 +34,30 @@ ateng:
         endpoint-enabled: false
         scan-packages:
           - io.github.atengk.solid
+          - io.github.atengk.boot.core.audit
+    async:
+      pools:
+        password-hash:
+          mode: platform
+          core-pool-size: 4
+          max-pool-size: 6
+          queue-capacity: 64
     satoken:
       primary-login-type: admin
+      super-admin-roles:
+        - super_admin
+      permission-cache:
+        tenant-scoped: true
       same-token:
         enabled: false
       login-defense:
         enabled: true
+      tenant:
+        header-name: X-Tenant-Id
+        allow-anonymous-header: false
+        allow-super-admin-switch: true
+        platform-tenant-ids:
+          - "0"
       interceptor:
         enabled: true
         check-login: true
@@ -45,6 +67,7 @@ ateng:
     mybatis-plus:
       data-permission:
         enabled: true
+        failure-strategy: DENY_ALL
       tenant:
         # 多租户默认关闭（首期极简单租户开箱运行）；开启时同步置 ateng.solid.tenant.enabled=true
         enabled: false
@@ -57,6 +80,41 @@ ateng:
           - sys_dict_type
           - sys_dict_data
           - flyway_schema_history
+    storage:
+      type: s3
+      s3:
+        path-style: true
+        auto-create-bucket: true
+      local:
+        download-endpoint-enabled: true
+        upload-endpoint-enabled: false
+        whitelist-presigned-download: true
+        whitelist-presigned-upload: false
+      guard:
+        enabled: true
+        strict-magic-check: true
+        allowed-extensions:
+          - jpg
+          - jpeg
+          - png
+          - webp
+        max-file-size: 2MB
   solid:
     tenant:
       enabled: false
+      status-cache-ttl: 60s
+    auth:
+      captcha-enabled: true
+    init:
+      enabled: true
+      super-admin-username: superadmin
+      super-admin-nickname: 超级管理员
+    data-scope:
+      max-dept-in-size: 1000
+    user:
+      import-max-rows: 500
+      max-concurrent-imports: 2
+      import-feedback-ttl: 15m
+    cache:
+      dict-ttl: 30m
+      config-ttl: 30m

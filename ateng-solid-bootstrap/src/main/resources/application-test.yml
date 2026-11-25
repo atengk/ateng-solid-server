@@ -13,3 +13,12 @@ ateng:
       enabled: false
     storage:
       enabled: false
+    mybatis-plus:
+      crypto:
+        secret-key: ateng-solid-test-deterministic-key-32b
+  solid:
+    auth:
+      captcha-enabled: false
+      session-handle-secret: ateng-solid-test-session-handle-secret-key
+    init:
+      super-admin-password: Ateng@Test2026

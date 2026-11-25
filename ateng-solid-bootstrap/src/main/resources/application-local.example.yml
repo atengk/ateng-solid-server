@@ -5,7 +5,7 @@
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${SOLID_DB_HOST:YOUR_DB_HOST}:${SOLID_DB_PORT:3306}/${SOLID_DB_NAME:ateng_solid}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false
+    url: jdbc:mysql://${SOLID_DB_HOST:YOUR_DB_HOST}:${SOLID_DB_PORT:3306}/${SOLID_DB_NAME:ateng_solid}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: ${SOLID_DB_USERNAME:YOUR_DB_USERNAME}
     password: ${SOLID_DB_PASSWORD:YOUR_DB_PASSWORD}
   data:
@@ -16,3 +16,33 @@ spring:
       database: ${SOLID_REDIS_DATABASE:0}
   flyway:
     enabled: true
+
+ateng:
+  boot:
+    mybatis-plus:
+      crypto:
+        # 确定性字段加密密钥（16/24/32 字节或强随机串；生产上线后严禁轻易变更）
+        secret-key: ${SOLID_CRYPTO_SECRET_KEY:YOUR_CRYPTO_SECRET_KEY}
+    storage:
+      # 默认使用 S3 兼容对象存储（RustFS / MinIO / 阿里云 OSS 等），path-style 与安全守卫已在 application.yml 预设
+      type: s3
+      s3:
+        endpoint: ${SOLID_S3_ENDPOINT:http://YOUR_S3_HOST:9000}
+        bucket: ${SOLID_S3_BUCKET:YOUR_S3_BUCKET}
+        access-key: ${SOLID_S3_ACCESS_KEY:YOUR_S3_ACCESS_KEY}
+        secret-key: ${SOLID_S3_SECRET_KEY:YOUR_S3_SECRET_KEY}
+        path-style: true
+        auto-create-bucket: true
+      # 如需临时回退本地文件存储模式，可将 type 改为 local 并启用下方目录配置：
+      # type: local
+      # local:
+      #   base-path: ${SOLID_STORAGE_LOCAL_PATH:./data/storage}
+      #   secret-key: ${SOLID_STORAGE_LOCAL_SECRET:YOUR_LOCAL_STORAGE_SECRET}
+
+  solid:
+    auth:
+      # 在线会话不透明句柄 AES-256-GCM 签名密钥（集群部署必须固定一致，单机留空则启动随机生成并打 WARN）
+      session-handle-secret: ${SOLID_AUTH_SESSION_HANDLE_SECRET:YOUR_SESSION_HANDLE_SECRET}
+    init:
+      # 可选：显式预设首次启动超级管理员初始口令（须符合 8~20 位含 3 类以上字符策略；留空则首次建号自动生成强口令）
+      # super-admin-password: ${SOLID_INIT_SUPER_ADMIN_PASSWORD:}
