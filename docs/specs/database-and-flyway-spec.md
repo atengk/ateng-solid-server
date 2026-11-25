@@ -310,14 +310,14 @@
      private String phone;
      ```
 2. **收口深模块 `ContactFieldCrypto`（`io.github.atengk.solid.system.support`）**：
-   - 严禁业务 Service 直接在 `LambdaQueryWrapper` 中裸传明文或分散手写 `trim`/`toLowerCase`/`EncryptTypeHandler.encryptDeterministic(...)`；全部收口于无状态工具类 `ContactFieldCrypto` 的 6 个方法：
+   - 严禁业务 Service 直接传未归一化明文或分散手写 `trim`/`toLowerCase`/`EncryptTypeHandler.encryptDeterministic(...)`；全部收口于无状态工具类 `ContactFieldCrypto` 的 6 个方法：
      - `String normalizePhone(String raw)`：`trim()` 后若为空白统一返回 `null`（防空串 `""` 触发 `uk_user_tenant_phone_deleted` 唯一键冲突）；
      - `String normalizeEmail(String raw)`：`trim().toLowerCase(Locale.ROOT)` 后若为空白统一返回 `null`（消除 HMAC-SHA256 大小写敏感导致的重复绕过）；
      - `String encryptPhoneForQuery(String raw)` / `String encryptEmailForQuery(String raw)`：先归一化，非空时调用 `EncryptTypeHandler.encryptDeterministic(...)` 返回确定性密文，空值返回 `null`；
      - `List<String> encryptPhonesForQuery(Collection<String> raws)` / `List<String> encryptEmailsForQuery(Collection<String> raws)`：批量去重归一化并加密，专供 500 行用户导入 `IN` 批量查重使用。
-3. **写路径与查询红线**：
-   - **禁止 `LIKE` 与 `ORDER BY`**：`/system/user` 列表 `phone` 筛选仅支持完整手机号精确匹配（`eq(SysUser::getPhone, ContactFieldCrypto.encryptPhoneForQuery(query.getPhone()))`）；
-   - **更新必须走 `updateById(entity)`**：严禁使用 `LambdaUpdateWrapper.set(SysUser::getPhone, plain)` 绕过 `TypeHandler` 写入裸明文；清空联系字段时经 `updateById`（配合 `UpdateStrategy.ALWAYS`）或显式 `.set(SysUser::getPhone, null)` 置 `NULL`；
+3. **写路径与查询红线（实测适配 MyBatis-Plus `3.5.17`）**：
+   - **禁止 `LIKE` 与 `ORDER BY`**：`/system/user` 列表 `phone` 筛选仅支持完整手机号精确匹配——使用 `QueryWrapper` 字符串列名或原生 SQL/XML 时调用 `eq("phone", ContactFieldCrypto.encryptPhoneForQuery(query.getPhone()))`；使用 `LambdaQueryWrapper`（`3.5.17` `AbstractLambdaWrapper` 会通过 `ColumnCache.mapping` 自动挂载字段 `DeterministicEncryptTypeHandler`，若传密文会触发二次加密）时统一传 `eq(SysUser::getPhone, ContactFieldCrypto.normalizePhone(query.getPhone()))`；
+   - **更新必须走 `updateById(entity)`**：3 参 `LambdaUpdateWrapper.set(SysUser::getPhone, val)` 不自动挂载 `TypeHandler`（直接传明文会写裸明文）；更新联系字段统一经 `updateById(entity)`（实体字段先经 `normalize*` 赋值），清空为 `NULL` 时显式 `.set(SysUser::getPhone, null)`；
    - **种子与密钥红线**：`V1.0.1__system_init_seed.sql` 严禁写入明文联系信息；`ateng.boot.mybatis-plus.crypto.secret-key` 必须在 `application-local.yml`/环境变量外部化固定配置（`application-test.yml` 配置离线测试桩密钥），上线后无离线重加密方案严禁更换密钥。
 
 ---

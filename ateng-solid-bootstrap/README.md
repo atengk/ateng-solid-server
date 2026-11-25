@@ -9,10 +9,11 @@
 | 能力域 | 产物 / 入口 | 关键机制 / 配置段 | 运行要求与安全守卫 | 锚定验证测试 (`*Test.java`) |
 | :--- | :--- | :--- | :--- | :--- |
 | 启动宿主 | [`SolidApplication`](./src/main/java/io/github/atengk/solid/SolidApplication.java) | `@SpringBootApplication` + `@ConfigurationPropertiesScan("io.github.atengk.solid")` | 自动装配 `SolidTenantProperties` / `SolidAuthProperties` / `SolidSystemProperties` | [`ConfigurationBaselineIntegrationTest`](./src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
-| 运行依赖 | [`pom.xml`](./pom.xml) | `mysql-connector-j`、`flyway-mysql`、`aws-sdk:{s3,apache-client}`（`runtime`） | 离线 `test` Profile 使用 H2 内存库并关闭 Flyway/Redis/Storage | `mvn clean test -B -T 1C -nsu` |
+| 运行依赖 | [`pom.xml`](./pom.xml) | `mysql-connector-j`、`flyway-mysql`、`aws-sdk:{s3,apache-client}`（`runtime`） | 离线 `test` Profile 使用 H2 内存库（启用 Flyway 并关闭 Redis/Storage） | `mvn clean test -B -T 1C -nsu` |
 | 主配置基线 | [`application.yml`](./src/main/resources/application.yml) | Java 21 虚拟线程、`satoken` 多账号路由、数据权限、S3+Guard、异步密码池、`ateng.solid.*` | 默启单租户；`password-hash` 使用 `platform` 线程池；数据权限失败 `DENY_ALL` | [`ConfigurationBaselineIntegrationTest`](./src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
 | 本地模板 | [`application-local.example.yml`](./src/main/resources/application-local.example.yml) | MySQL 8.4 LTS、Redis 8.x、S3 Path-Style、加密密钥与会话句柄密钥占位符 | 真实 `application-local.yml` 已被 `.gitignore` 忽略，模板禁含明文凭据 | 人工/Pre-commit 门禁 |
-| 离线测试桩 | [`application-test.yml`](./src/main/resources/application-test.yml) | H2 `MODE=MySQL`、`flyway.enabled: false`、`redis/storage.enabled: false` | 为离线单测/集成测试注入非敏感测试密钥与超管测试桩口令 | [`ConfigurationBaselineIntegrationTest`](./src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
+| 离线测试桩 | [`application-test.yml`](./src/main/resources/application-test.yml) | H2 `MODE=MySQL`、`flyway.enabled: true`、`redis/storage.enabled: false` | 为离线单测/集成测试激活 Flyway 全库迁移并注入非敏感测试密钥与超管测试桩口令 | [`ConfigurationBaselineIntegrationTest`](./src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) · [`FlywaySchemaAndSeedIntegrationTest`](./src/test/java/io/github/atengk/solid/FlywaySchemaAndSeedIntegrationTest.java) |
+| 持久层加密与迁移验证 | [`FlywaySchemaAndSeedIntegrationTest`](./src/test/java/io/github/atengk/solid/FlywaySchemaAndSeedIntegrationTest.java) · [`ContactFieldEncryptPersistenceTest`](./src/test/java/io/github/atengk/solid/ContactFieldEncryptPersistenceTest.java) | 17 表迁移、58 条菜单种子与 SIV 加密往返 | 校验 17 张表与确定性种子落库、`"v1:..."` 密文写入（含 64 位邮箱）、ORM 解密、多 `NULL` 放行与软删重建 | [`FlywaySchemaAndSeedIntegrationTest`](./src/test/java/io/github/atengk/solid/FlywaySchemaAndSeedIntegrationTest.java) · [`ContactFieldEncryptPersistenceTest`](./src/test/java/io/github/atengk/solid/ContactFieldEncryptPersistenceTest.java) |
 | 架构守卫 | [`ArchitectureGuardTest`](./src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) | 9 条 ArchUnit 硬红线 | 阻断跨模块越权、Web/ORM 污染、字段注入、`@Value`/`@RefreshScope` 与 `Result` 契约污染 | [`ArchitectureGuardTest`](./src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
 | 错误码防碰撞 | [`ResultCodeSegmentTest`](./src/test/java/io/github/atengk/solid/ResultCodeSegmentTest.java) | 千位号段校验 + 类路径 `IResultCode` 全扫描 | 校验 `100xxx`/`101xxx`/`102xxx` 无越界且与底座全部错误码零重复 | [`ResultCodeSegmentTest`](./src/test/java/io/github/atengk/solid/ResultCodeSegmentTest.java) |
 
@@ -34,7 +35,7 @@ mvn clean test -B -T 1C -nsu
 ```mermaid
 flowchart LR
     BASE["application.yml<br/>(公共安全基线 · 单租户默认 · S3+Guard)"] --> ENV{"激活环境"}
-    ENV -->|"test Profile"| TEST["application-test.yml<br/>(H2 MySQL模式 · 关Redis/Storage/Flyway)"]
+    ENV -->|"test Profile"| TEST["application-test.yml<br/>(H2 MySQL模式 · 开Flyway · 关Redis/Storage)"]
     ENV -->|"dev / prod"| LOCAL["optional:classpath:application-local.yml<br/>(.gitignore隔离 · DB/Redis/S3/Crypto凭据)"]
 ```
 
@@ -95,7 +96,7 @@ ateng:
 
 ## 4. 非功能基线与待关注上游约束
 
-- **离线可测性**：`test` Profile 当前保留 `spring.flyway.enabled: false`，待后续系统域 17 张 DDL 与确定性种子（`V1.0.0`/`V1.0.1`）落盘后开启全库 H2 Flyway 集成验证。
+- **离线可测性**：`test` Profile 已激活 `spring.flyway.enabled: true`，每次离线测试在 H2（`MODE=MySQL;DATABASE_TO_LOWER=TRUE`）自动执行 `V1.0.0`（17 张表）与 `V1.0.1`（58 条菜单及基础元数据种子）并完成 `ContactFieldCrypto` 确定性加密持久化验证。
 - **底座枚举字典扫描提示**：当前 `EnumDictionaryRegistry` 已扫描注册全部 `6` 个业务实现 `IBaseEnum` 的枚举（`commonStatus`、`logStatus`、`configType`、`dataScopeType`、`menuType`、`visibleStatus`）；`ateng-boot` 的 `OperateTypeEnum`（`io.github.atengk.boot.core.audit`）尚未实现 `IBaseEnum`，将在后续操作审计工单对接时按 [foundation-first-gate.md](../docs/agents/foundation-first-gate.md) 推进上游增强。
 
 ---

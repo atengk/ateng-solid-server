@@ -15,7 +15,7 @@
 1. 底座不存在拦截所有 SQL 参数与结果集的 MyBatis 全局加解密插件，持久层加密由 **`BaseTypeHandler<String>` + `@TableName(autoResultMap = true)`** 驱动；`@FieldEncrypt` 本身作为元数据标记驱动慢 SQL 脱敏、排序拦截与 `DynamicQueryHelper`；
 2. 默认 `EncryptTypeHandler` 采用每次随机 IV，**无法支持数据库唯一索引或 `=`/`IN` 精确检索**；`DeterministicEncryptTypeHandler`（HMAC-SHA256 合成固定 IV，密文格式 `"v1:" + Base64(16B SIV || cipher)`）支持等值查询与唯一索引，但仍**绝对不支持 `LIKE` 模糊查询与 `ORDER BY`**；
 3. 确定性加密对明文长度与字符字节高度敏感：11 位手机号加密后为 `47` 字符，**64 字符邮箱加密后长达 `131` 字符**（传统 `VARCHAR(64)`/`VARCHAR(128)` 会触发 MySQL `Data too long`）；HMAC-SHA256 区分大小写且 `encryptDeterministic("")` 原样返回 `""`（会导致防软删唯一索引因多条空串冲突）；
-4. MyBatis-Plus 常规 `LambdaQueryWrapper.eq/in` 与 `LambdaUpdateWrapper.set` **不会自动触发 `TypeHandler`**，直接传明文会导致查不到记录或误写入裸明文。
+4. MyBatis-Plus `3.5.17` 实测分流：`QueryWrapper`（字符串列名）、`@Select`/XML 及 `LambdaUpdateWrapper#set(SFunction, Object)` **不会**自动触发 `TypeHandler`（需显式调 `ContactFieldCrypto.encrypt*ForQuery` 或 `.set(..., null)`）；而 `LambdaQueryWrapper`（`SFunction` 列引用）会通过 `ColumnCache.mapping` **自动注入** `@TableField(typeHandler = ...)`（须传 `ContactFieldCrypto.normalize*` 归一化明文，严禁传已加密密文导致二次加密）。
 
 ---
 
