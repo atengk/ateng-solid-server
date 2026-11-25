@@ -1,8 +1,10 @@
 package io.github.atengk.solid.system.support;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
 import io.github.atengk.solid.common.properties.SolidTenantProperties;
@@ -18,6 +20,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.regex.Pattern;
 
 /**
  * 系统管理域共享上下文与基础校验协作者，统一收口工作租户解析、平台租户强校验、路径主键解析与状态边界检查。
@@ -33,6 +37,15 @@ public class SystemContextSupport {
      * 常规管理分页查询单页安全上限
      */
     public static final long DEFAULT_MAX_PAGE_SIZE = 100L;
+
+    private static final String SAFE_ERROR_PLACEHOLDER = "系统内部处理异常，详情请检索服务端日志";
+    private static final int MAX_AUDIT_ERROR_MSG_LEN = 2000;
+    private static final Pattern STACK_OR_TECH_EXCEPTION_PATTERN = Pattern.compile(
+            "(?is)(\\r?\\n\\s*at\\s+|Caused\\s+by:|org\\.springframework\\.|com\\.baomidou\\.|org\\.apache\\.ibatis\\.|org\\.mybatis\\.|java\\.lang\\.|java\\.sql\\.|org\\.h2\\.|com\\.mysql\\.|###\\s*(Error|SQL:)|SQLSyntaxError|BadSqlGrammar|SQLException)"
+    );
+    private static final Pattern RAW_SQL_STATEMENT_PATTERN = Pattern.compile(
+            "(?is)\\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\\b[\\s\\S]{0,120}\\b(FROM|INTO|SET|TABLE|WHERE|VALUES)\\b"
+    );
 
     private final SolidTenantProperties tenantProperties;
 
@@ -150,6 +163,59 @@ public class SystemContextSupport {
             return null;
         }
         return value.trim();
+    }
+
+    /**
+     * 去除字符串首尾空白，并在超过指定长度时进行截断。
+     *
+     * @param value     原始字符串
+     * @param maxLength 最大允许长度
+     * @return 裁剪截断后的字符串或 {@code null}
+     */
+    public static String truncate(String value, int maxLength) {
+        String trimmed = trimToNull(value);
+        if (trimmed == null || maxLength <= 0) {
+            return null;
+        }
+        return trimmed.length() <= maxLength ? trimmed : trimmed.substring(0, maxLength);
+    }
+
+    /**
+     * 脱敏审计错误摘要，严禁将原始 Java 堆栈或 SQL 语句落库及透传至管理端接口。
+     *
+     * @param rawErrorMsg 原始异常摘要
+     * @return 安全处理后的错误摘要（为空时返回 {@code null}）
+     */
+    public static String sanitizeAuditErrorMsg(String rawErrorMsg) {
+        String trimmed = trimToNull(rawErrorMsg);
+        if (trimmed == null) {
+            return null;
+        }
+        if (STACK_OR_TECH_EXCEPTION_PATTERN.matcher(trimmed).find()
+                || RAW_SQL_STATEMENT_PATTERN.matcher(trimmed).find()) {
+            return SAFE_ERROR_PLACEHOLDER;
+        }
+        return truncate(trimmed, MAX_AUDIT_ERROR_MSG_LEN);
+    }
+
+    /**
+     * 将 MyBatis-Plus 分页结果统一转换为标准 {@link PageResult}，空页保底返回不可变空集合。
+     *
+     * @param page   持久层分页结果
+     * @param mapper 实体转视图对象映射函数
+     * @param <E>    持久层实体类型
+     * @param <V>    视图对象类型
+     * @return 标准分页结果
+     */
+    public static <E, V> PageResult<V> toPageResult(Page<E> page, Function<E, V> mapper) {
+        if (page == null) {
+            return PageResult.empty();
+        }
+        List<E> source = page.getRecords();
+        List<V> mapped = CollectionUtils.isEmpty(source)
+                ? Collections.emptyList()
+                : source.stream().map(mapper).toList();
+        return PageResult.of(mapped, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
     /**

@@ -1,10 +1,10 @@
 # ateng-solid-system 系统管理域核心业务实现模块
 
-> 一句话定位：实现 `ateng-solid-system-api` 全部跨模块契约并承载组织权限、5 级 `@DataScope` 数据权限引擎、多租户、字典参数、审计落库及 `db/migration/system/` Flyway 脚本（接口前缀 `/admin/system/**`）；当前已完成 `Spec 1` 基础设施基线、`Spec 2` 认证安全契约底座及 `Spec 3` 组织架构（部门/岗位）、权限树（菜单/角色）与 `@DataScope` 数据权限后端闭环，用户全功能及多租户/字典参数 CRUD 将于后续 `Spec 3 ~ Spec 4` 逐步落地。
+> 一句话定位：实现 `ateng-solid-system-api` 全部跨模块契约并承载组织权限、5 级 `@DataScope` 数据权限引擎、多租户、静态枚举/动态字典、系统参数、审计落库及 `db/migration/system/` Flyway 脚本（接口前缀 `/admin/system/**`）；当前已完成 `Spec 1` 基础设施基线、`Spec 2` 认证安全契约底座、`Spec 3` 组织架构（部门/岗位）/权限树（菜单/角色）/`@DataScope` 与 `Spec 4` 静态枚举接管、动态字典/系统参数缓存及操作/登录只读审计，用户全功能及多租户 CRUD 将于后续工单逐步落地。
 
 ---
 
-## 0. 对外契约、核心引擎与持久化全景速查 (`Spec 1 ~ Spec 3`)
+## 0. 对外契约、核心引擎与持久化全景速查 (`Spec 1 ~ Spec 4`)
 
 | 能力域 | 产物 / 入口 | 核心机制 / SPI / 配置键 | 核心输入 / 输出与边界约定 | 锚定验证测试 (`*Test.java`) |
 | :--- | :--- | :--- | :--- | :--- |
@@ -16,6 +16,10 @@
 | 岗位管理 (`/admin/system/post`) | [`SysPostController`](./src/main/java/io/github/atengk/solid/system/controller/SysPostController.java) · [`SysPostService`](./src/main/java/io/github/atengk/solid/system/service/SysPostService.java) | `/page`、`GET /options` (`@SaCheckLogin`)、`GET /{id}`、`POST`、`PUT`、`PUT /{id}/status`、`DELETE /{ids}` · `system:post:*` | 同租户编码/名称唯一校验 `102002`；批量删除校验 `sys_user_post`（关联未删除用户）拦截 `102005` 并点名岗位名称 | [`OrgAndRbacIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/OrgAndRbacIntegrationTest.java) · [`OrgAndRbacMockMvcTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/OrgAndRbacMockMvcTest.java) |
 | 菜单管理 (`/admin/system/menu`) | [`SysMenuController`](./src/main/java/io/github/atengk/solid/system/controller/SysMenuController.java) · [`SysMenuService`](./src/main/java/io/github/atengk/solid/system/service/SysMenuService.java) | `/tree`、`GET /{id}`、`POST`、`PUT`、`PUT /{id}/status`、`DELETE /{id}` · `system:menu:*` | 严格锁定平台默认租户 `0`（非 `0` 抛 `403`）；M/C/F 拓扑及降级守卫 `100001`；`platformOnly` 收紧级联裁剪；提交后 `clearAll()` | [`OrgAndRbacIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/OrgAndRbacIntegrationTest.java) · [`OrgAndRbacEdgeIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/OrgAndRbacEdgeIntegrationTest.java) |
 | 角色管理 (`/admin/system/role`) | [`SysRoleController`](./src/main/java/io/github/atengk/solid/system/controller/SysRoleController.java) · [`SysRoleService`](./src/main/java/io/github/atengk/solid/system/service/SysRoleService.java) · [`SysRoleQueryService`](./src/main/java/io/github/atengk/solid/system/service/SysRoleQueryService.java) · [`RoleAuthorizationSupport`](./src/main/java/io/github/atengk/solid/system/service/RoleAuthorizationSupport.java) | `/page`、`/options` (`/menu-tree` 套餐交集)、`/{id}`、`POST`、`PUT`、`PUT /{id}/status`、`PUT /{id}/data-scope`、`DELETE /{ids}` | 禁用保留编码 `102004`；保护 `super_admin` `102007`；套餐越界 `102006`（兼容半选目录）；`CUSTOM` 至少 1 部门 `100001`；提交后 3 参 `clearRoleCache` | [`OrgAndRbacIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/OrgAndRbacIntegrationTest.java) · [`OrgAndRbacEdgeIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/OrgAndRbacEdgeIntegrationTest.java) |
+| 静态枚举自主接管 (`/admin/system/enums`) | [`SysEnumController`](./src/main/java/io/github/atengk/solid/system/controller/SysEnumController.java) | `@SaCheckLogin` · `GET /`、`GET /{name}`、`GET /batch`、`POST /batch` · `EnumDictionaryRegistry` | 彻底关闭底座 `/api/system/enums`；覆盖全部 7 项首期 `IBaseEnum` 静态枚举（含底座 `operateType`），未命中别名抛 `404` | [`SysEnumControllerMockMvcTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SysEnumControllerMockMvcTest.java) |
+| 动态数据字典 (`/admin/system/dict`) | [`SysDictController`](./src/main/java/io/github/atengk/solid/system/controller/SysDictController.java) · [`SysDictService`](./src/main/java/io/github/atengk/solid/system/service/SysDictService.java) · [`SysDictQueryService`](./src/main/java/io/github/atengk/solid/system/service/SysDictQueryService.java) · [`DictDataCache`](./src/main/java/io/github/atengk/solid/system/support/DictDataCache.java) | `/type/*`、`/data/*`、`/data/type/{dictType}` (`@SaCheckLogin`) · `ateng:solid:dict:{dictType}` (30m) | 写操作锁定平台租户 `0`；编辑锁 `dictType`；含子项禁删 `102005`；`isDefault=1` 同事务互斥清零；停用缓空 `[]`；提交后精准驱逐 | [`DictDataCacheTest`](./src/test/java/io/github/atengk/solid/system/support/DictDataCacheTest.java) · [`SysDictAndConfigIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SysDictAndConfigIntegrationTest.java) |
+| 系统参数 (`/admin/system/config`) | [`SysConfigController`](./src/main/java/io/github/atengk/solid/system/controller/SysConfigController.java) · [`SysConfigService`](./src/main/java/io/github/atengk/solid/system/service/SysConfigService.java) · [`SysConfigCache`](./src/main/java/io/github/atengk/solid/system/support/SysConfigCache.java) | `/page`、`/{id}`、`GET /key/{configKey}` (`@SaCheckLogin`)、`POST`、`PUT`、`DELETE /{ids}` · `ateng:solid:config:{tenantId}:{configKey}` | `configType='Y'` 禁删改键降级 `102007` 且禁业务参数 `N->Y`；`sys.user.initPassword` 过原始强口令校验；非 `0` 租户自动兜底租户 `0` | [`SysConfigCacheTest`](./src/test/java/io/github/atengk/solid/system/support/SysConfigCacheTest.java) · [`SysDictAndConfigIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SysDictAndConfigIntegrationTest.java) |
+| 操作审计落库与只读日志 (`/admin/system/log`) | [`SolidOperateLogStorageProvider`](./src/main/java/io/github/atengk/solid/system/audit/SolidOperateLogStorageProvider.java) · [`SysLogController`](./src/main/java/io/github/atengk/solid/system/controller/SysLogController.java) · [`SysLogQueryService`](./src/main/java/io/github/atengk/solid/system/service/SysLogQueryService.java) | `OperateLogStorageProvider` · `/oper/page`、`/oper/{id}`、`/login/page` (`system:{oper,login}-log:list`) | 异步线程脱离 `LoginHelper` 主键回查账号与租户 `0` 超管，脱敏堆栈 SQL 落库；查询端点严格只读倒序与跨租户隔离 | [`SolidOperateLogStorageProviderTest`](./src/test/java/io/github/atengk/solid/system/audit/SolidOperateLogStorageProviderTest.java) · [`AuditLogIntegrationAndMockMvcTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/AuditLogIntegrationAndMockMvcTest.java) |
 | 超管启动引导器 | [`SuperAdminBootstrapper`](./src/main/java/io/github/atengk/solid/system/bootstrap/SuperAdminBootstrapper.java) | `ApplicationRunner` · `ateng:solid:init:super-admin:lock` (30s) | `role_id=1` 绑定判重跳过；外部强口令校验 Fail-Fast；留空生成 16 位无歧义随机口令；`DuplicateKeyException` 事务外复核 | [`SuperAdminBootstrapperIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SuperAdminBootstrapperIntegrationTest.java) |
 | 租户服务、零漂移缓存与切头校验 | [`RemoteTenantServiceImpl`](./src/main/java/io/github/atengk/solid/system/service/remote/RemoteTenantServiceImpl.java) · [`TenantStatusCache`](./src/main/java/io/github/atengk/solid/system/support/TenantStatusCache.java) · [`TenantHeaderSwitchValidatorImpl`](./src/main/java/io/github/atengk/solid/system/security/TenantHeaderSwitchValidatorImpl.java) | `RemoteTenantService` · `TenantHeaderSwitchValidator` · `ateng:solid:tenant:status:{tenantId}` (TTL 60s) | Redis 紧凑 JSON + 负向哨兵 + 本地 10,000 上限降级；读时 0 秒过期截断；单租户禁切与异常租户抛 `100002` 且不注销超管会话 | [`TenantStatusCacheTest`](./src/test/java/io/github/atengk/solid/system/support/TenantStatusCacheTest.java) · [`RemoteServicesIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/RemoteServicesIntegrationTest.java) |
 | 权限服务与加载器 SPI | [`RemotePermissionServiceImpl`](./src/main/java/io/github/atengk/solid/system/service/remote/RemotePermissionServiceImpl.java) · [`SolidUserRolePermissionLoader`](./src/main/java/io/github/atengk/solid/system/security/SolidUserRolePermissionLoader.java) | `RemotePermissionService` · `UserRolePermissionLoader` 3 参重载 | 隔离非 `admin` 体系；停用祖先级联剪枝、`platform_only=1` 拦截、`!tenantEnabled` 隐藏多租户目录与空 `M` 裁剪；超管返回 `["*:*:*"]` | [`RemoteServicesIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/RemoteServicesIntegrationTest.java) |
@@ -244,6 +248,64 @@ PUT /admin/system/role/2001/data-scope
 - **菜单（`SysMenuService`）**：全部读写接口强制校验平台租户 `0`（非 `0` 抛 `403`）；严格校验 `M`/`C`/`F` 拓扑、`perms` 三段式正则、外链 `^https?://.+`、路由组件 `name` 全树唯一（`102002`）与节点降级冲突（`100001`）；`platformOnly` 由 `false` 收紧为 `true` 时级联收紧子树并裁剪非平台绑定；删停/改写成功后于 `TransactionUtil.executeAfterCommit` 触发 `permissionCacheService.clearAll()`。
 - **角色（`SysRoleService` / `SysRoleQueryService`）**：禁用保留编码 `super_admin`/`admin`（`102004`）；平台内置 `super_admin` 角色禁止改停删与改数据范围（`102007`）；`/options` 非平台超管视角隐藏 `super_admin`；普通租户 `/menu-tree` 与 `createRole`/`updateRole` 严格校验套餐边界及 `platformOnly=false`（越界抛 `102006`，并兼容 `menu_check_strictly=0` 半选套餐回传的父目录半选节点）；变更菜单/状态/删除提交后调用 3 参 `clearRoleCache("admin", tenantId, roleKey)`，若同时修改 `roleKey` 则联动清理绑定用户的 `user-roles` 缓存。
 
+### 3.7 静态枚举接管、动态字典与系统参数多租户缓存
+
+**1. 专属配置片段**
+
+```yaml
+ateng:
+  boot:
+    web:
+      enum:
+        enabled: true
+        endpoint-enabled: false # 彻底关闭底座 /api/system/enums，交由 SysEnumController 管控
+        scan-packages:
+          - io.github.atengk.solid
+          - io.github.atengk.boot.core.audit # 扫描接入 OperateTypeEnum
+  solid:
+    cache:
+      dict-ttl: 30m
+      config-ttl: 30m
+```
+
+**2. 多租户参数兜底与静态枚举调用示例**
+
+```java
+// 1. 静态枚举单别名/全量查询（受 @SaCheckLogin 保护，未命中抛出 404）
+Result<List<OptionItem<Object>>> operateTypes = sysEnumController.getByName("operateType");
+
+// 2. 系统参数读取（非 0 租户未命中时自动在 TenantContextHolder.runWithTenant(0L, ...) 下兜底平台全局值）
+String initPwd = sysConfigService.getConfigValue(tenantId, "sys.user.initPassword");
+```
+
+**3. 边界与防御**
+- **双模有界缓存（`BoundedDualModeCache` / `DictDataCache` / `SysConfigCache`）**：`Redis` 读写与业务回源异常严格解耦，避免数据库回源报错被误降级重复执行；无 Redis 时降级 `ConcurrentLruCache(10_000)`；全部写操作后置于 `TransactionUtil.executeAfterCommit` 精准驱逐，停用或不存在键写入空数组 `[]` / 空哨兵防缓存穿透。
+- **平台字典锁与系统参数保护**：字典类型/明细管理写操作严格校验平台租户 `0`，编辑锁定 `dictType` 不可改，含未删除子项阻断删类型（`102005`），局部更新未传 `tagType` 时保留原有样式；系统内置参数（`configType='Y'`）禁删、禁改键名与禁降级（`102007`），且业务自建参数创建后禁止编辑升格为 `'Y'`，`sys.user.initPassword` 基于未裁剪原始值执行 `PasswordPolicyValidator` 强口令校验。
+
+### 3.8 操作审计异步落库与只读审计查询
+
+**1. 专属配置片段**
+
+```yaml
+spring:
+  threads:
+    virtual:
+      enabled: true   # @OperateLog 切面在异步工作线程委托 OperateLogStorageProvider 落库
+```
+
+**2. 异步线程上下文安全落库流（提取自 [`SolidOperateLogStorageProvider`](./src/main/java/io/github/atengk/solid/system/audit/SolidOperateLogStorageProvider.java)）**
+
+```java
+// 严禁在异步线程调 LoginHelper.getLoginUser()，严格依据 model 租户与用户主键回查账号并回退平台租户 0
+String resolvedUserName = resolveUserName(effectiveTenantId, userId, model.getUserName());
+entity.setErrorMsg(SystemContextSupport.sanitizeAuditErrorMsg(model.getErrorMsg()));
+TenantContextHolder.runWithTenant(effectiveTenantId, () -> sysOperLogMapper.insert(entity));
+```
+
+**3. 边界与防御**
+- **防崩溃与敏感堆栈截断**：`SystemContextSupport#sanitizeAuditErrorMsg` 对包含 Java 异常类名/堆栈与原始 SQL 的错误信息替换为安全提示，长字段（`requestParams`、`responseResult`、`extraJson`）截断上限 `16,000` 字符防止超过 `TEXT` 列阈值导致审计丢失，落库异常就地记录并隔离绝不波及业务请求。
+- **严格只读分页查询**：`SysLogController` 零增删改端点（`DELETE` 等返回 `405`），按工作租户严格隔离、起止时间逆序检验（`100001`）与发生时间/主键倒序分页输出。
+
 ---
 
 ## 4. 扩展点 (SPI) 与非功能防线
@@ -253,7 +315,8 @@ PUT /admin/system/role/2001/data-scope
 | 底座 `TenantHeaderSwitchValidator` | [`TenantHeaderSwitchValidatorImpl`](./src/main/java/io/github/atengk/solid/system/security/TenantHeaderSwitchValidatorImpl.java) | 校验 `X-Tenant-Id` 与 `ateng.solid.tenant.enabled`，拒绝非法切换抛 `100002` |
 | 底座 `UserRolePermissionLoader` | [`SolidUserRolePermissionLoader`](./src/main/java/io/github/atengk/solid/system/security/SolidUserRolePermissionLoader.java) | 实现单参/双参/三参重载，隔离 `admin` 体系并桥接 `CachedStpInterface` 二级缓存 |
 | 底座 `DataPermissionHandler` | [`SolidDataPermissionHandler`](./src/main/java/io/github/atengk/solid/system/security/SolidDataPermissionHandler.java) | 5 级数据权限 SQL AST 改写，`ObjectProvider` 解耦 Bean 循环，Fail-Closed `1 = 0` |
-| 缓存、锁与事务后置副作用防线 | [`TenantStatusCache`](./src/main/java/io/github/atengk/solid/system/support/TenantStatusCache.java) · [`SuperAdminBootstrapper`](./src/main/java/io/github/atengk/solid/system/bootstrap/SuperAdminBootstrapper.java) · [`RoleAuthorizationSupport`](./src/main/java/io/github/atengk/solid/system/service/RoleAuthorizationSupport.java) | `ReentrantLock` 保护有界本地缓存与去重表；Lua Token 原子锁释放；全部缓存失效严格挂接 `TransactionUtil.executeAfterCommit` |
+| 底座 `OperateLogStorageProvider` | [`SolidOperateLogStorageProvider`](./src/main/java/io/github/atengk/solid/system/audit/SolidOperateLogStorageProvider.java) | 无 HTTP 上下文异步单点查人、堆栈 SQL 脱敏与长字段安全截断落库 |
+| 缓存、锁与事务后置副作用防线 | [`TenantStatusCache`](./src/main/java/io/github/atengk/solid/system/support/TenantStatusCache.java) · [`BoundedDualModeCache`](./src/main/java/io/github/atengk/solid/system/support/BoundedDualModeCache.java) · [`SuperAdminBootstrapper`](./src/main/java/io/github/atengk/solid/system/bootstrap/SuperAdminBootstrapper.java) · [`RoleAuthorizationSupport`](./src/main/java/io/github/atengk/solid/system/service/RoleAuthorizationSupport.java) | `ConcurrentLruCache` 保护有界本地降级与 `ReentrantLock`；Lua Token 原子锁释放；全部缓存失效严格挂接 `TransactionUtil.executeAfterCommit` |
 
 ---
 
@@ -272,21 +335,22 @@ PUT /admin/system/role/2001/data-scope
 | `ateng.solid.data-scope.max-dept-in-size` | `1000` | 部门 IN 子查询最大部门集合上限 |
 | `ateng.solid.user.{import-max-rows,max-concurrent-imports,import-feedback-ttl}` | `500` / `2` / `15m` | 批量导入行数上限、并发信号量与批注暂存有效期 |
 | `ateng.solid.cache.{dict-ttl,config-ttl}` | `30m` / `30m` | 字典与参数缓存 TTL |
+| `ateng.boot.web.enum.{enabled,endpoint-enabled,scan-packages}` | `true` / `false` / `[...]` | 开启枚举扫描并关闭底座默认端点，包含 `io.github.atengk.boot.core.audit`（`operateType`） |
 
 ### 5.2 本模块触发错误码清单
 
 | 错误码 | 枚举常量 | 触发场景 |
 | :--- | :--- | :--- |
-| `100001` | `CommonBizResultCode.PARAM_INVALID` | 部门/菜单防自环与 `M/C/F` 拓扑/降级错误、禁用上级下启用子部门、自定数据权限 `CUSTOM` 部门为空、非法状态或个人资料空入参 |
+| `100001` | `CommonBizResultCode.PARAM_INVALID` | 部门/菜单防自环与 `M/C/F` 拓扑/降级错误、禁用上级下启用子部门、自定数据权限 `CUSTOM` 部门为空、编辑篡改 `dictType`、业务参数 `N` 升格 `Y`、日志时间逆序或弱 `initPassword` |
 | `100002` | `CommonBizResultCode.INVALID_TENANT_SWITCH` | 跨租户头 `X-Tenant-Id` 目标不存在、已停用、已过期、匿名带头或单租户模式越权切租户 |
 | `100003` | `CommonBizResultCode.DATA_SCOPE_ERROR` | `@DataScope` 解析后可见部门数超过 `ateng.solid.data-scope.max-dept-in-size` 上限 |
 | `100004` | `CommonBizResultCode.FILE_GUARD_REJECTED` | 上传头像为空、非 `jpg/jpeg/png/webp`、超 2MB 或魔数不匹配 |
-| `102001` | `SystemResultCode.RECORD_NOT_FOUND` | 目标部门、岗位、菜单、角色、用户或租户记录不存在 |
-| `102002` | `SystemResultCode.DUPLICATE_RESOURCE` | 同级部门重名、同租户岗位编码/名称重复、全树路由组件名重复、同租户角色编码/名称重复或个人资料手机号/邮箱冲突 |
+| `102001` | `SystemResultCode.RECORD_NOT_FOUND` | 目标部门、岗位、菜单、角色、用户、租户、字典或系统参数/日志记录不存在 |
+| `102002` | `SystemResultCode.DUPLICATE_RESOURCE` | 同级部门重名、同租户岗位编码/名称重复、路由组件名重复、角色编码/名称重复、字典类型/值重复、同租户参数键名重复或手机号/邮箱冲突 |
 | `102004` | `SystemResultCode.RESERVED_ROLE_KEY` | 创建或修改角色使用保留编码 `super_admin` 或 `admin` |
-| `102005` | `SystemResultCode.RESOURCE_IN_USE` | 停用含未停用子部门；删除仍存在子节点、套餐/角色引用或活跃用户绑定的部门/岗位/菜单/角色 |
+| `102005` | `SystemResultCode.RESOURCE_IN_USE` | 停用含未停用子部门；删除仍存在子节点、活跃用户或未删字典明细的部门/岗位/菜单/角色/字典类型 |
 | `102006` | `SystemResultCode.TENANT_QUOTA_OR_SCOPE_EXCEEDED` | 普通租户角色授权越界勾选套餐外或 `platform_only=true` 菜单、单租户授予多租户治理菜单 |
-| `102007` | `SystemResultCode.SYSTEM_BUILTIN_PROTECTED` | 试图编辑、停用、变更数据范围或删除平台内置 `super_admin` 角色 |
+| `102007` | `SystemResultCode.SYSTEM_BUILTIN_PROTECTED` | 试图编辑、停用、变更数据范围或删除平台内置 `super_admin` 角色，或删除/改键/降级内置参数（`configType='Y'`） |
 
 ### 5.3 关联文档
 
