@@ -22,10 +22,10 @@
    - `101000 ~ 101999`：`ateng-solid-auth`（认证/验证码/锁定/会话）；
    - `102000 ~ 102999`：`ateng-solid-system-api`（租户/套餐/用户/角色/菜单/部门/岗位/字典/参数）。
 2. **持久层继承基类与防唯一键冲突模型（对齐 `ateng-boot#1134`）**：
-   - 核心业务/组织/配置表默认继承 **`BaseLogicEntity`**（`deleted BIGINT NOT NULL DEFAULT 0`，逻辑删除自动将 `deleted` 更新为自身雪花 `id`；**不强绑 `@Version` 乐观锁**；`create_by`/`update_by` 为 `VARCHAR(64)`）；
-   - 仅高并发状态防覆盖核心表按需继承 **`BaseFullEntity`**（在 `BaseLogicEntity` 基础上追加 `@Version Integer version`，初始默认值统一为 `0`）；
-   - 审计流水表（`sys_oper_log`、`sys_login_log`）与多对多关联表继承 **`BaseIdEntity`**；多租户隔离表统一实现 **`TenantAware<Long>`**；
-   - 唯一索引统一命名为 `uk_<字段>_deleted`（如 `UNIQUE KEY uk_tenant_username_deleted (tenant_id, username, deleted)`）。
+   - 第一阶段全部 10 张核心业务/组织/配置主表统一继承 **`BaseLogicEntity`**（`deleted BIGINT NOT NULL DEFAULT 0`，逻辑删除自动将 `deleted` 更新为自身雪花 `id`；**不引入 `@Version` 乐观锁列**；`create_by`/`update_by` 为 `VARCHAR(64)`）；
+   - **`BaseFullEntity`**（在 `BaseLogicEntity` 基础上追加 `@Version Integer version`，初始默认值统一为 `0`）留待二期或行业二开的高并发状态流转表按需继承；
+   - 审计流水表（`sys_oper_log`、`sys_login_log`）与 5 张多对多关联表继承 **`BaseIdEntity`**；11 张多租户隔离表统一实现 **`TenantAware<Long>`**；
+   - 全库字符集与排序规则统一 `utf8mb4` / `utf8mb4_0900_ai_ci`（对齐 MySQL 8.4 LTS 默认排序且兼容 H2 `MODE=MySQL`）；为规避 H2 索引名 Schema 全局唯一限制，所有索引强制携带表简名前缀（`uk_<表简名>_<字段>_deleted` / `idx_<表简名>_<字段>`，如 `uk_user_tenant_username_deleted`、`idx_oper_log_tenant_trace`）。
 3. **无物理外键与 `ateng-boot-flyway`**：
    - 全库表严禁创建 `FOREIGN KEY`，关联一致性由 Service 层与事务保证；
-   - 使用 `ateng-boot-flyway` 管理版本化 DDL 与初始化种子数据，生产环境自动开启 `clean` 硬熔断。
+   - 使用 `ateng-boot-flyway`（`bootstrap` 显式引入 `org.flywaydb:flyway-mysql` `runtime` 方言包）管理版本化 DDL 与 `< 100,000` 确定性种子数据，生产环境自动开启 `clean` 与高危 DDL 硬熔断。

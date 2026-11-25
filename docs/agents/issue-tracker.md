@@ -1,22 +1,25 @@
 # Issue 跟踪器与工单协作规范 (GitHub Issues)
 
-本仓库（`atengk/ateng-solid-server`）使用 **GitHub Issues** 管理后端需求、模块规格、ArchUnit/测试任务与缺陷，统一通过 `gh` CLI 操作（标签映射详见 [`triage-labels.md`](./triage-labels.md)）。
+本仓库（`atengk/ateng-solid-server`）的规划决策单与后端编码实现工单（`[server]` 前缀、`ready-for-agent`）统一收口在聚合根仓库 **`atengk/ateng-solid`** 的 **GitHub Issues** 集中追踪与串联原生 `blockedBy` 依赖链，统一通过 `gh` CLI 附加 `-R atengk/ateng-solid` 操作（标签映射详见 [`triage-labels.md`](./triage-labels.md)）。
 
-> **底层缺口联动**：开发过程中若发现 `ateng-boot` 或 `ateng-cloud` 存在基础设施能力缺失或缺陷，严禁在本仓编写绕过补丁，须立即按 [`foundation-first-gate.md`](./foundation-first-gate.md) 暂停受阻特性并向对应底座仓库提交通用化 Issue。
+> **单仓统一工单 + 多仓物理隔离源码**：
+> - **严禁在 `atengk/ateng-solid-server` 重复创建同类编码实现单**，请统一操作 `-R atengk/ateng-solid` 并在标题使用 `[server]` 前缀；
+> - 后端源码开发、本地测试、Git 提交与推送仍严格在 `ateng-solid-server` 独立仓库内执行；
+> - **底层缺口联动**：开发过程中若发现 `ateng-boot` 或 `ateng-cloud` 存在基础设施能力缺失或缺陷，严禁在本仓编写绕过补丁，须立即按 [`foundation-first-gate.md`](./foundation-first-gate.md) 暂停受阻特性并向对应底座仓库（`atengk/ateng-boot` / `atengk/ateng-cloud`）提交通用化 Issue。
 
 ---
 
 ## 1. `gh` CLI 常用操作约定
 
-- **创建工单**：`gh issue create --title "<标题>" --label "<标签>" -F <body-file>`（长文本强制使用 `-F <file>`）
-- **查看工单**：`gh issue view <number> --json number,title,body,labels,comments`
-- **列表查询**：`gh issue list --state open --label "ready-for-agent" --json number,title,labels,assignees`
-- **关联父子工单（Sub-issues）**：`gh issue create --parent <parent> ...` 或 `gh issue edit <parent> --add-sub-issue <child>`；不支持时在子单顶部注明 `Part of #<parent>`
-- **阻塞依赖（Blocking）**：优先使用原生依赖 `gh issue create --blocked-by <n>` 或 `gh issue edit <child> --add-blocked-by <blocker>`；查询未关闭阻塞数：`gh issue view <n> --json blockedBy --jq '[.blockedBy.nodes[] | select(.state == "OPEN")] | length'`；不可用时回退至正文顶部 `Blocked by: #<n>`
-- **评论与状态流转**：`gh issue comment <number> -F <file>`、`gh issue edit <number> --add-label "<add>" --remove-label "<remove>"`、`gh issue edit <number> --add-assignee "@me"`
-- **关闭工单**：先评论交付验证摘要 `gh issue comment <number> -F <summary-file>`，再执行 `gh issue close <number>`
+- **创建工单**：`gh issue create -R atengk/ateng-solid --title "[server] <标题>" --label "<标签>" -F <body-file>`（长文本强制使用 `-F <file>`）
+- **查看工单**：`gh issue view <number> -R atengk/ateng-solid --json number,title,body,labels,comments`
+- **列表查询**：`gh issue list -R atengk/ateng-solid --state open --label "ready-for-agent" --json number,title,labels,assignees`
+- **关联父子工单（Sub-issues）**：`gh issue create -R atengk/ateng-solid --parent <parent> ...` 或 `gh issue edit <parent> -R atengk/ateng-solid --add-sub-issue <child>`；不支持时在子单顶部注明 `Part of #<parent>`
+- **阻塞依赖（Blocking）**：优先使用原生依赖 `gh issue create -R atengk/ateng-solid --blocked-by "<n1>,<n2>"` 或 `gh issue edit <child> -R atengk/ateng-solid --add-blocked-by <blocker>`；查询未关闭阻塞数：`gh issue view <n> -R atengk/ateng-solid --json blockedBy --jq '[.blockedBy.nodes[] | select(.state == "OPEN")] | length'`；不可用时回退至正文顶部 `Blocked by: #<n>`
+- **评论与状态流转**：`gh issue comment <number> -R atengk/ateng-solid -F <file>`、`gh issue edit <number> -R atengk/ateng-solid --add-label "<add>" --remove-label "<remove>"`、`gh issue edit <number> -R atengk/ateng-solid --add-assignee "@me"`
+- **关闭工单**：先评论交付验证摘要 `gh issue comment <number> -R atengk/ateng-solid -F <summary-file>`，再执行 `gh issue close <number> -R atengk/ateng-solid`
 
-> **目标仓库校验**：首次执行写操作前可运行 `gh repo view --json nameWithOwner` 确认目标仓库为 `atengk/ateng-solid-server`。
+> **目标仓库校验**：在本子仓目录执行工单命令必须显式携带 `-R atengk/ateng-solid`，严禁误建至子仓或第三方上游仓。
 
 ---
 

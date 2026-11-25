@@ -26,7 +26,7 @@
   - 联合唯一索引采用 `(tenant_id, biz_key, deleted)`（平台共享表 `(biz_key, deleted)`）；
   - 业务 SQL 须 100% 兼容测试期 H2（`MODE=MySQL`）与生产 MySQL 8.x，严禁使用 `FIND_IN_SET`、`ON UPDATE CURRENT_TIMESTAMP` 或 `${}` 拼接。
 - **多租户、认证与脱敏**：
-  - 租户隔离表及 4 张关联表携带 `tenant_id BIGINT NOT NULL DEFAULT 0` 并实现 `TenantAware<Long>`（默认租户 `0` / `'000000'`，默认关闭开关 `ateng.solid.tenant.enabled=false`）；免过滤表为 `sys_tenant`/`sys_tenant_package`/`sys_menu`/`sys_dict_type`/`sys_dict_data`/`flyway_schema_history`。
+  - 租户隔离表及 4 张关联表携带 `tenant_id BIGINT NOT NULL DEFAULT 0` 并实现 `TenantAware<Long>`（默认租户 `0` / `'000000'`，默认关闭开关 `ateng.solid.tenant.enabled=false`）；免过滤表为 `sys_tenant`/`sys_tenant_package`/`sys_tenant_package_menu`/`sys_menu`/`sys_dict_type`/`sys_dict_data`/`flyway_schema_history`。
   - 管理端 `/admin/**` 绑定 `loginType="admin"`（请求头 `satoken-admin`）；超管角色收敛为 `super_admin`（严禁放行 `"admin"`）；仅租户 `0` 且 `super_admin` 可受控切换 `X-Tenant-Id`。
   - 口令用 `PasswordUtil`，防爆破 `LoginFailureLockService` 键隔离 `tenantId:loginType:username`；内存保持真明文（持久化 `@FieldEncrypt`，展示/导出 `@Sensitive`/`@ExcelSensitive`）；关闭底座内置枚举端点（`ateng.boot.web.enum.endpoint-enabled=false`），自建 `/admin/system/enums`。
   - 扩展配置收口于 `@ConfigurationProperties(prefix = "ateng.solid.*")`，禁 `@RefreshScope` 与零散 `@Value`。
@@ -49,7 +49,7 @@
 | 修改 `system-api`、跨模块调用/事件、Flyway、`Same-Token` 或 Cloud 装配边界 | [`docs/agents/cloud-readiness.md`](./docs/agents/cloud-readiness.md) |
 | 遇 `ateng-boot`/`ateng-cloud` 底座缺口，或本地 `-SNAPSHOT` 跨仓联调 | [`docs/agents/foundation-first-gate.md`](./docs/agents/foundation-first-gate.md) |
 | 功能通过测试后逆向沉淀模块 `README.md` / Specs / `CONTEXT.md` / `llms.txt` | [`docs/agents/documentation-specification.md`](./docs/agents/documentation-specification.md) |
-| 查阅建表 DDL、RBAC/`@DataScope`、端点错误码明细或 ArchUnit 规格 | [`docs/specs/database-and-flyway-spec.md`](./docs/specs/database-and-flyway-spec.md) · [`auth-rbac-and-datascope-spec.md`](./docs/specs/auth-rbac-and-datascope-spec.md) · [`api-and-error-codes-spec.md`](./docs/specs/api-and-error-codes-spec.md) · [`configuration-and-archunit-spec.md`](./docs/specs/configuration-and-archunit-spec.md) |
+| 查阅建表 DDL、RBAC/`@DataScope`、端点错误码、系统引擎与 ArchUnit 规格 | [`docs/specs/database-and-flyway-spec.md`](./docs/specs/database-and-flyway-spec.md) · [`auth-rbac-and-datascope-spec.md`](./docs/specs/auth-rbac-and-datascope-spec.md) · [`api-and-error-codes-spec.md`](./docs/specs/api-and-error-codes-spec.md) · [`configuration-and-archunit-spec.md`](./docs/specs/configuration-and-archunit-spec.md) · [`system-engines-and-testing-spec.md`](./docs/specs/system-engines-and-testing-spec.md) |
 | 全局索引、上下文地图与后端架构决策 | [`llms.txt`](./llms.txt) · [`CONTEXT-MAP.md`](./CONTEXT-MAP.md) · [`docs/adr/README.md`](./docs/adr/README.md) |
 
 ## Agent skills

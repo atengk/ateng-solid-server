@@ -29,6 +29,7 @@
 - [认证、RBAC 与 `@DataScope` 规范](./docs/specs/auth-rbac-and-datascope-spec.md): `satoken-admin`、防爆破、多租户开关与 5 级数据权限
 - [管理端接口契约与错误码规范](./docs/specs/api-and-error-codes-spec.md): `/admin/auth/**`、`/admin/system/**`、自建枚举端点与 `100xxx/101xxx/102xxx` 错误码
 - [工程配置基线与 ArchUnit 规格](./docs/specs/configuration-and-archunit-spec.md): 模块依赖矩阵、双模配置与自动化架构守卫规则
+- [系统域核心引擎与离线测试契约](./docs/specs/system-engines-and-testing-spec.md): 多租户事务/行锁防超卖、缓存强退矩阵、500 行并发导入批注、S3/Local 头像与三层离线切片测试
 
 ## 核心模块目录 (Core Modules)
 
