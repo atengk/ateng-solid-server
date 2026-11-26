@@ -26,10 +26,28 @@
 
 ---
 
-## 3. 运行环境、规范文档与测试
+## 3. 运行环境、启动脚本与测试
 
 - **运行基线**：OpenJDK 21 LTS + Apache Maven 3.9+ + MySQL 8.4 LTS / Redis 8.x（Schema 演进采用 `ateng-boot-flyway`）。
 - **五档分层配置**：默认 `dev` 自动导入 `.gitignore` 忽略的 `application-local.yml`（模板见 `application-local.example.yml`）；`prod` 强制零默认值 `${SOLID_*}` Fail-Fast 注入敏感凭据与分级连接池/文件日志；`test` 依托 H2（`MODE=MySQL`）与内存降级 100% 离线自洽并物理隔离本地配置。
+- **服务启停与构建脚本（[`scripts/server.sh`](./scripts/server.sh)）**：支持源码仓内开发联调与独立 Fat JAR 生产部署两种形态（无子命令时默认输出 `--help`；所有带值选项兼容 `--opt=val` 写法，支持通过 `--jvm-opts`、`--app-args`、`SOLID_APP_ARGS` 及末尾 `--` 向 `SpringApplication` 透传参数）：
+
+```bash
+# 0. 查看完整参数说明（无参默认等同于 --help）
+bash scripts/server.sh
+
+# 1. 源码仓内：巡检、增量构建并后台启动（dev 默认加载 application-local.yml）
+bash scripts/server.sh check
+bash scripts/server.sh start --build
+bash scripts/server.sh start --port=8081 --jvm-opts="-Xms512m -Xmx1g" -- --logging.level.root=DEBUG
+bash scripts/server.sh status
+bash scripts/server.sh logs -f
+
+# 2. 独立部署态（将 ateng-solid-bootstrap-*.jar 与 scripts/server.sh 同置运行目录）：
+bash scripts/server.sh start --profile prod --env-file .env.prod --app-args "--spring.main.lazy-initialization=true"
+bash scripts/server.sh logs --error -n 200
+bash scripts/server.sh stop
+```
 - **核心规范入口**：
   - 独立开发行为准则：[`AGENTS.md`](./AGENTS.md)
   - 底层缺口即停工与联调 SOP（同步副本）：[`docs/agents/foundation-first-gate.md`](./docs/agents/foundation-first-gate.md)

@@ -32,8 +32,8 @@
 ## 3. 五步本地协同闭环与 `main` 发版四项验收
 
 1. **禁止上层 Hack（局部聚焦底座）**：暂停在上层编写绕过补丁（不冻结 Spec、其他模块或待联调后的上层编码推进）。
-2. **源码实测与建单留痕**：核查对应底座源码与 GitHub Issues，提炼通用向后兼容方案，执行 `gh issue create -R atengk/<repo>` 建单，并在根仓 `docs/specs/foundation-enhancements-checklist.md` 登记待锁版底座项。
-3. **底座本地改造与 `dev` 协同提交**：在底座仓 `dev` 完成改造、通过底座独立单测并**本地提交至底座 `dev` 分支**；按第 4 节 SOP 刷新本地 `-SNAPSHOT` / `yalc` 后，上层即可直接编码、跑绿本地离线全量测试，并**正常提交至上层 `dev` 分支**（`dev` 允许保留 `-SNAPSHOT` / `file:.yalc`；联调期间远端 `dev` CI 暂红属已知可接受状态）。
+2. **源码实测、建单留痕与跨仓停手边界（硬门禁）**：核查对应底座源码与 GitHub Issues，提炼通用向后兼容方案，执行 `gh issue create -R atengk/<repo>` 建单，并在根仓 `docs/specs/foundation-enhancements-checklist.md` 登记待锁版底座项。**默认到此为止：未经用户明确确认，严禁在 `ateng-solid` 会话中直接修改 `ateng-boot`、`ateng-cloud`、`ateng-ui` 等外部底座仓库源码**（避免跳过建单或与底座独立开发工作树冲突）。
+3. **获准后的底座本地改造与 `dev` 协同提交**：仅当用户明确要求或确认由当前会话协同修改底座时，方可在底座仓 `dev` 完成改造、通过底座独立单测并**本地提交至底座 `dev` 分支**；按第 4 节 SOP 刷新本地 `-SNAPSHOT` / `yalc` 后，上层即可直接编码、跑绿本地离线全量测试，并**正常提交至上层 `dev` 分支**（`dev` 允许保留 `-SNAPSHOT` / `file:.yalc`；联调期间远端 `dev` CI 暂红属已知可接受状态）。
 4. **特性/缺陷 Issue 独立闭环**：上层 `[server]` / `[admin-web]` 业务与缺陷 Issue 在同时满足“**关联底座改动已提交至底座 `dev` 并通过单测** + **本仓改动已提交至 `dev` 且本地全量测试全绿**”后，即可立即关闭，无需等待底座发布 Maven Central / npm 正式版；底座待发版项集中由增强清单与发版收口工单追踪。
 5. **`main` 合入与发版前四项双轴验收（全绿方可合并 `main` / 打 Tag）**：
    - **无项目污染**：底座源码、配置、测试零 `ateng-solid` 专属命名；
