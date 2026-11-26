@@ -206,6 +206,7 @@ public class AuthService {
                 .avatar(profile.getAvatarUrl())
                 .roles(roles)
                 .permissions(permissions)
+                .tenantEnabled(tenantResolutionSupport.isMultiTenantEnabled())
                 .passwordNeedsChange(profile.getPwdUpdateTime() == null)
                 .loginIp(profile.getLoginIp())
                 .loginDate(profile.getLoginDate())

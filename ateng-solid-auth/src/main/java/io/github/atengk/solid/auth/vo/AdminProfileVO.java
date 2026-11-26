@@ -69,6 +69,11 @@ public class AdminProfileVO implements Serializable {
     private List<String> permissions = Collections.emptyList();
 
     /**
+     * 当前服务端是否开启多租户模式
+     */
+    private boolean tenantEnabled;
+
+    /**
      * 是否仍需提醒自助修改初始或重置密码
      */
     private boolean passwordNeedsChange;

@@ -256,13 +256,14 @@ class TenantRuntimeGuardMockMvcTest {
         String superToken = loginAndGetToken("000000", "superadmin", "Ateng@Test2026");
         String tenantAToken = loginAndGetToken("T5001", "tenant_a_admin", "Ateng@Tenant1");
 
-        // 1. 合法切换至正常企业A：/info 返回目标租户摘要，/routes 过滤 platform_only
+        // 1. 合法切换至正常企业A：/info 返回目标租户摘要与 tenantEnabled=true，/routes 过滤 platform_only
         mockMvc.perform(get("/admin/auth/info")
                         .header("satoken-admin", superToken)
                         .header("X-Tenant-Id", String.valueOf(TENANT_ACTIVE_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.tenantId").value(String.valueOf(TENANT_ACTIVE_ID)))
+                .andExpect(jsonPath("$.data.tenantEnabled").value(true))
                 .andExpect(jsonPath("$.data.tenantName").value("正常企业A"));
 
         MvcResult switchedRoutes = mockMvc.perform(get("/admin/auth/routes")
@@ -282,12 +283,13 @@ class TenantRuntimeGuardMockMvcTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(100002));
 
-        // 3. 超管复位或不带 X-Tenant-Id 后，自身 "0" 会话仍完全有效
+        // 3. 超管复位或不带 X-Tenant-Id 后，自身 "0" 会话仍完全有效且 tenantEnabled=true
         mockMvc.perform(get("/admin/auth/info")
                         .header("satoken-admin", superToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
-                .andExpect(jsonPath("$.data.tenantId").value("0"));
+                .andExpect(jsonPath("$.data.tenantId").value("0"))
+                .andExpect(jsonPath("$.data.tenantEnabled").value(true));
 
         // 4. 在租户A视角签发的不透明句柄，回到平台租户 0 视角强退时应当因 AAD 不匹配返回 400
         MvcResult onlinePage = mockMvc.perform(get("/admin/auth/online/page")
