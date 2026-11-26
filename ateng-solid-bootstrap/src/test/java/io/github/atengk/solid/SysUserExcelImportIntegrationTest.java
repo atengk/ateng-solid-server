@@ -277,6 +277,20 @@ class SysUserExcelImportIntegrationTest {
                         .header("satoken-admin", tokenA))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(CommonBizResultCode.EXCEL_VALIDATION_FAILED.getCode()));
+
+        // 底座 MultipartException 细分拦截（ateng-boot#1178）：非 multipart 请求与缺失分片均映射为 400 而非 500
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/admin/system/user/import")
+                        .header("satoken-admin", tokenA)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"file\":\"not-multipart\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.msg").value("文件上传请求格式不合法或内容解析失败"));
+
+        mockMvc.perform(multipart("/admin/system/user/import")
+                        .header("satoken-admin", tokenA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400));
     }
 
     @Test

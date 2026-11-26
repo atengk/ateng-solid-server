@@ -397,5 +397,19 @@ class AuthSecurityEdgeMockMvcTest {
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.objectPath").isString())
                 .andExpect(jsonPath("$.data.avatarUrl").isString());
+
+        // 5. 底座 MultipartException 细分拦截（ateng-boot#1178）：非 multipart 请求与缺失分片均映射为 400 而非 500
+        mockMvc.perform(post("/admin/auth/profile/avatar")
+                        .header("satoken-admin", aliceToken)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"file\":\"not-multipart\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.msg").value("文件上传请求格式不合法或内容解析失败"));
+
+        mockMvc.perform(multipart("/admin/auth/profile/avatar")
+                        .header("satoken-admin", aliceToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400));
     }
 }

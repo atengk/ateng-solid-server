@@ -6,12 +6,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.util.PasswordUtil;
 import io.github.atengk.boot.mybatisplus.context.DataPermissionContextHolder;
 import io.github.atengk.boot.satoken.cache.PermissionCacheService;
 import io.github.atengk.boot.satoken.defense.LoginFailureLockService;
 import io.github.atengk.solid.TenantAndPackageTestFixtures.FailOnRollbackTrigger;
 import io.github.atengk.solid.TenantAndPackageTestFixtures.TenantSeedSpec;
+import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
 import io.github.atengk.solid.system.api.dto.TenantAuthDTO;
 import io.github.atengk.solid.system.api.result.SystemResultCode;
@@ -34,7 +36,10 @@ import io.github.atengk.solid.system.mapper.SysTenantPackageMapper;
 import io.github.atengk.solid.system.mapper.SysTenantPackageMenuMapper;
 import io.github.atengk.solid.system.mapper.SysUserMapper;
 import io.github.atengk.solid.system.mapper.SysUserRoleMapper;
+import io.github.atengk.solid.system.request.TenantCreateRequest;
+import io.github.atengk.solid.system.service.SysTenantService;
 import io.github.atengk.solid.system.support.TenantStatusCache;
+import io.github.atengk.solid.system.vo.CreateTenantVO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -51,8 +56,15 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.github.atengk.solid.TenantAndPackageTestFixtures.awaitLatestOperateLog;
@@ -128,6 +140,8 @@ class TenantAndPackageIntegrationTest {
     private SysUserRoleMapper sysUserRoleMapper;
     @Autowired
     private SysOperLogMapper sysOperLogMapper;
+    @Autowired
+    private SysTenantService sysTenantService;
 
     @BeforeAll
     void setUpFixtures() {
@@ -332,5 +346,77 @@ class TenantAndPackageIntegrationTest {
         mockMvc.perform(delete("/admin/system/tenant/{ids}", String.valueOf(tId)).header("satoken-admin", superToken))
                 .andExpect(jsonPath("$.code").value(200));
         mockMvc.perform(get("/admin/auth/info").header("satoken-admin", reloginToken)).andExpect(jsonPath("$.code").value(401));
+    }
+
+    @Test
+    @DisplayName("并发以同一 tenantCode 新增租户时仅 1 次成功落库，其余统一收敛为 102002 且零孤儿脏数据")
+    void shouldHandleConcurrentDuplicateTenantCodeVia102002WithoutOrphans() throws Exception {
+        int threads = 4;
+        String raceCode = "CONC3401";
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        CountDownLatch startGate = new CountDownLatch(1);
+        AtomicInteger successCount = new AtomicInteger();
+        AtomicInteger duplicateCount = new AtomicInteger();
+        List<Long> createdTenantIds = Collections.synchronizedList(new ArrayList<>());
+        List<Throwable> unexpectedErrors = Collections.synchronizedList(new ArrayList<>());
+
+        try {
+            List<Future<?>> futures = new ArrayList<>(threads);
+            for (int i = 0; i < threads; i++) {
+                futures.add(pool.submit(() -> {
+                    startGate.await();
+                    try {
+                        TenantCreateRequest req = new TenantCreateRequest();
+                        req.setTenantCode(raceCode);
+                        req.setTenantName("并发同码测试租户");
+                        req.setPackageId(EXISTING_PKG_ID);
+                        req.setAccountCount(5);
+                        req.setAdminUsername("conc_admin");
+                        req.setAdminPassword("Ateng@Conc2026");
+                        CreateTenantVO created = TenantContextHolder.runWithTenant(
+                                SolidConstants.PLATFORM_TENANT_ID,
+                                () -> sysTenantService.createTenant(req)
+                        );
+                        createdTenantIds.add(created.getTenantId());
+                        successCount.incrementAndGet();
+                    } catch (BusinessException ex) {
+                        if (SystemResultCode.DUPLICATE_RESOURCE.getCode().equals(ex.getCode())) {
+                            duplicateCount.incrementAndGet();
+                        } else {
+                            unexpectedErrors.add(ex);
+                        }
+                    } catch (Throwable ex) {
+                        unexpectedErrors.add(ex);
+                    } finally {
+                        TenantContextHolder.clear();
+                    }
+                    return null;
+                }));
+            }
+            startGate.countDown();
+            for (Future<?> future : futures) {
+                future.get(30, TimeUnit.SECONDS);
+            }
+
+            assertThat(unexpectedErrors).isEmpty();
+            assertThat(successCount.get()).isEqualTo(1);
+            assertThat(duplicateCount.get()).isEqualTo(threads - 1);
+            assertThat(createdTenantIds).hasSize(1);
+            Long winnerId = createdTenantIds.get(0);
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(1) FROM sys_tenant WHERE tenant_code = ?", Integer.class, raceCode)).isEqualTo(1);
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(1) FROM sys_user WHERE tenant_id = ?", Integer.class, winnerId)).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+            for (Long createdId : createdTenantIds) {
+                jdbcTemplate.update("DELETE FROM sys_user_role WHERE tenant_id = ?", createdId);
+                jdbcTemplate.update("DELETE FROM sys_user WHERE tenant_id = ?", createdId);
+                jdbcTemplate.update("DELETE FROM sys_role_menu WHERE tenant_id = ?", createdId);
+                jdbcTemplate.update("DELETE FROM sys_role WHERE tenant_id = ?", createdId);
+                jdbcTemplate.update("DELETE FROM sys_dept WHERE tenant_id = ?", createdId);
+                jdbcTemplate.update("DELETE FROM sys_tenant WHERE id = ?", createdId);
+            }
+        }
     }
 }
