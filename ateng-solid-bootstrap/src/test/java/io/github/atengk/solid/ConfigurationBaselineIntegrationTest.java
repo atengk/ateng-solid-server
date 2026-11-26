@@ -1,12 +1,16 @@
 package io.github.atengk.solid;
 
+import com.zaxxer.hikari.HikariDataSource;
 import io.github.atengk.boot.core.enums.AsyncExecutionMode;
 import io.github.atengk.boot.core.properties.AsyncPoolProperties;
 import io.github.atengk.boot.core.properties.AsyncProperties;
+import io.github.atengk.boot.core.properties.CoreProperties;
 import io.github.atengk.boot.mybatisplus.properties.MybatisPlusProperties;
+import io.github.atengk.boot.redis.properties.RedisProperties;
 import io.github.atengk.boot.satoken.properties.SaTokenProperties;
 import io.github.atengk.boot.storage.properties.StorageProperties;
 import io.github.atengk.boot.web.dict.EnumDictionaryRegistry;
+import io.github.atengk.boot.web.properties.WebProperties;
 import io.github.atengk.solid.auth.properties.SolidAuthProperties;
 import io.github.atengk.solid.common.event.DomainEventPublisher;
 import io.github.atengk.solid.common.event.SpringDomainEventPublisher;
@@ -16,12 +20,18 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.env.Environment;
+import org.springframework.core.env.PropertySource;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.util.unit.DataSize;
 
+import javax.sql.DataSource;
+import java.io.IOException;
 import java.time.Duration;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -58,6 +68,15 @@ class ConfigurationBaselineIntegrationTest {
 
     @Autowired
     private EnumDictionaryRegistry enumDictionaryRegistry;
+
+    @Autowired
+    private CoreProperties coreProperties;
+
+    @Autowired
+    private WebProperties webProperties;
+
+    @Autowired
+    private DataSource dataSource;
 
     @Autowired
     private Environment environment;
@@ -124,6 +143,66 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(storageProperties.getGuard().getAllowedExtensions())
                 .containsExactlyInAnyOrder("jpg", "jpeg", "png", "webp");
         assertThat(storageProperties.getGuard().getMaxFileSize()).isEqualTo(DataSize.ofMegabytes(2));
+    }
+
+    @Test
+    @DisplayName("应当正确装配 HikariCP 离线连接池、优雅停机策略与多环境分层配置基线")
+    void shouldBindPoolAndMultiEnvironmentBaseline() throws IOException, ClassNotFoundException {
+        assertThat(Class.forName("org.apache.commons.pool2.impl.GenericObjectPoolConfig")).isNotNull();
+
+        assertThat(dataSource).isInstanceOf(HikariDataSource.class);
+        HikariDataSource hikari = (HikariDataSource) dataSource;
+        assertThat(hikari.getPoolName()).isEqualTo("ateng-solid-hikari");
+        assertThat(hikari.getMinimumIdle()).isEqualTo(1);
+        assertThat(hikari.getMaximumPoolSize()).isEqualTo(5);
+        assertThat(hikari.getConnectionTimeout()).isEqualTo(10_000L);
+        assertThat(hikari.getValidationTimeout()).isEqualTo(3_000L);
+
+        assertThat(environment.getProperty("server.shutdown")).isEqualTo("graceful");
+        assertThat(environment.getProperty("spring.flyway.enabled", Boolean.class)).isTrue();
+        assertThat(coreProperties.getSlowAlert().getDefaultThreshold()).isEqualTo(Duration.ofMillis(500));
+        assertThat(webProperties.getShutdown().getMvcEndpointEnabled()).isFalse();
+        assertThat(webProperties.getShutdown().isEnabled()).isFalse();
+        assertThat(webProperties.getShutdown().getDrainTimeout()).isEqualTo(Duration.ZERO);
+        assertThat(webProperties.getPayloadLog().isEnabled()).isFalse();
+        assertThat(webProperties.getCors().isEnabled()).isFalse();
+        assertThat(asyncProperties.isWaitForTasksToCompleteOnShutdown()).isTrue();
+        assertThat(asyncProperties.getAwaitTermination()).isEqualTo(Duration.ofSeconds(5));
+        RedisProperties redisProperties = Binder.get(environment)
+                .bind("ateng.boot.redis", RedisProperties.class)
+                .get();
+        assertThat(redisProperties.getKeyPrefix()).isEqualTo("solid:");
+        assertThat(redisProperties.getRedisson().getPingConnectionInterval()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(redisProperties.getRedisson().getLockWatchdogTimeout()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(mybatisPlusProperties.getBlockAttack().isEnabled()).isTrue();
+        assertThat(mybatisPlusProperties.getSlowSql().isEnabled()).isTrue();
+        assertThat(mybatisPlusProperties.getSqlLog().isEnabled()).isFalse();
+
+        YamlPropertySourceLoader loader = new YamlPropertySourceLoader();
+        List<PropertySource<?>> devSources = loader.load("dev", new ClassPathResource("application-dev.yml"));
+        assertThat(devSources).hasSize(1);
+        assertThat(devSources.getFirst().getProperty("spring.config.import"))
+                .isEqualTo("optional:classpath:application-local.yml");
+        assertThat(devSources.getFirst().getProperty("spring.datasource.hikari.maximum-pool-size")).isEqualTo(10);
+        assertThat(devSources.getFirst().getProperty("spring.data.redis.lettuce.pool.max-active")).isEqualTo(8);
+        assertThat(devSources.getFirst().getProperty("ateng.boot.redis.redisson.connection-pool-size")).isEqualTo(16);
+
+        List<PropertySource<?>> prodSources = loader.load("prod", new ClassPathResource("application-prod.yml"));
+        assertThat(prodSources).hasSize(1);
+        PropertySource<?> prod = prodSources.getFirst();
+        assertThat(prod.getProperty("spring.datasource.username")).isEqualTo("${SOLID_DB_USERNAME}");
+        assertThat(prod.getProperty("spring.datasource.password")).isEqualTo("${SOLID_DB_PASSWORD}");
+        assertThat(prod.getProperty("spring.data.redis.host")).isEqualTo("${SOLID_REDIS_HOST}");
+        assertThat(prod.getProperty("spring.data.redis.password")).isEqualTo("${SOLID_REDIS_PASSWORD}");
+        assertThat(prod.getProperty("ateng.boot.mybatis-plus.crypto.secret-key"))
+                .isEqualTo("${SOLID_CRYPTO_SECRET_KEY}");
+        assertThat(prod.getProperty("ateng.solid.auth.session-handle-secret"))
+                .isEqualTo("${SOLID_AUTH_SESSION_HANDLE_SECRET}");
+        assertThat(prod.getProperty("spring.flyway.enabled")).isEqualTo("${SOLID_FLYWAY_ENABLED:false}");
+        assertThat(prod.getProperty("ateng.boot.core.logging.file.enabled"))
+                .isEqualTo("${SOLID_LOG_FILE_ENABLED:true}");
+        assertThat(prod.getProperty("ateng.boot.web.payload-log.enabled")).isEqualTo(false);
+        assertThat(prod.getProperty("ateng.boot.mybatis-plus.sql-log.enabled")).isEqualTo(false);
     }
 
     @Test

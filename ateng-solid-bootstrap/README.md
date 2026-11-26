@@ -9,10 +9,12 @@
 | 能力域 | 产物 / 入口 | 关键机制 / 配置段 | 运行要求与安全守卫 | 锚定验证测试 (`*Test.java`) |
 | :--- | :--- | :--- | :--- | :--- |
 | 启动宿主 | [`SolidApplication`](./src/main/java/io/github/atengk/solid/SolidApplication.java) | `@SpringBootApplication` + `@ConfigurationPropertiesScan("io.github.atengk.solid")` | 自动装配 `SolidTenantProperties` / `SolidAuthProperties` / `SolidSystemProperties` | [`ConfigurationBaselineIntegrationTest`](./src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
-| 运行依赖 | [`pom.xml`](./pom.xml) | `mysql-connector-j`、`flyway-mysql`、`aws-sdk:{s3,apache-client}`（`runtime`） | 离线 `test` Profile 使用 H2 内存库（启用 Flyway 并关闭 Redis/Storage） | `mvn clean test -B -T 1C -nsu` |
-| 主配置基线 | [`application.yml`](./src/main/resources/application.yml) | Java 21 虚拟线程、`logging.charset` (UTF-8)、`satoken` 多账号路由、数据权限、S3+Guard、异步密码池、`ateng.solid.*` | 默启单租户；控制台/文件日志强制 UTF-8；`password-hash` 使用 `platform` 线程池；数据权限失败 `DENY_ALL` | [`ConfigurationBaselineIntegrationTest`](./src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
-| 本地模板 | [`application-local.example.yml`](./src/main/resources/application-local.example.yml) | MySQL 8.4 LTS、Redis 8.x、S3 Path-Style、加密密钥与会话句柄密钥占位符 | 真实 `application-local.yml` 已被 `.gitignore` 忽略，模板禁含明文凭据 | 人工/Pre-commit 门禁 |
-| 离线测试桩 | [`application-test.yml`](./src/main/resources/application-test.yml) | H2 `MODE=MySQL`、`flyway.enabled: true`、排除 Redis 自动装配与 `redis/storage.enabled: false` | 为离线单测/集成测试激活 Flyway 全库迁移、切换 Captcha 内存存储并注入测试密钥与超管测试桩口令 | [`ConfigurationBaselineIntegrationTest`](./src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) · [`FlywaySchemaAndSeedIntegrationTest`](./src/test/java/io/github/atengk/solid/FlywaySchemaAndSeedIntegrationTest.java) |
+| 运行依赖 | [`pom.xml`](./pom.xml) | `ateng-boot-flyway`、`commons-pool2`、`mysql-connector-j`、`flyway-mysql`、`aws-sdk:{s3,apache-client}` | `commons-pool2` 由 Spring Boot BOM 统管以激活 Lettuce 池；离线 `test` 排除 Redis 自动装配并切换 H2 | `mvn clean test -B -T 1C -nsu` |
+| 主配置基线 | [`application.yml`](./src/main/resources/application.yml) | Tomcat 队列/压缩、`shutdown: graceful`、Java 21 虚拟线程、Hikari/Redis 超时与保活、`logging.charset` (UTF-8)、`satoken`、`data-permission`、`S3+Guard`、`password-hash` 池、`ateng.solid.*` | 默认激活 `dev`；关冗余 `/pre-stop` MVC 端点仅留 `SmartLifecycle`；安全头 + `DENY_ALL` + `solid:` 键前缀 | [`ConfigurationBaselineIntegrationTest`](./src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
+| 开发联调配置 | [`application-dev.yml`](./src/main/resources/application-dev.yml) | 导入 `optional:classpath:application-local.yml`、Hikari (`2~10` + 10s 泄漏检测)、Lettuce (`2~8`)、Redisson (`4/4/16/4`)、SQL 诊断、`localhost` CORS | 仅在 `dev` 下导入本机覆盖文件；`active-timeout: 2h`、`payload-log: false`、`DEBUG` 级业务日志 | 本地启动联调 / 单测验证 |
+| 生产基线配置 | [`application-prod.yml`](./src/main/resources/application-prod.yml) | 强凭据零默认值 `${SOLID_*}` Fail-Fast、`flyway: ${SOLID_FLYWAY_ENABLED:false}`、Hikari (`5~20`)、Lettuce (`4~16`)、Redisson (`8~32`)、双文件滚动日志 | 禁 OpenAPI/Knife4j/H2Console、`sql-log`/`payload-log` 与通配跨域，仅留脱敏 `slow-sql`（异步）/慢请求与 `login-defense` | [ADR-0005](../docs/adr/0005-multi-env-configuration-and-pool-baseline.md) |
+| 本地模板 | [`application-local.example.yml`](./src/main/resources/application-local.example.yml) | MySQL 8.4 LTS、Redis 8.x、S3 Path-Style、连接池覆写占位与加密/会话密钥 `${SOLID_*}` 占位符 | 真实 `application-local.yml` 已被 `.gitignore` 忽略，模板禁含明文凭据 | 人工 / Pre-commit 门禁 |
+| 离线测试桩 | [`application-test.yml`](./src/main/resources/application-test.yml) | H2 `MODE=MySQL`、Hikari (`1~5`)、`flyway.enabled: true`、排除 Redis 自动装配、`web.shutdown` 快速关闭与测试桩密钥 | 100% 脱离 `application-local.yml` 与外部中间件自洽跑通全量测试 | [`ConfigurationBaselineIntegrationTest`](./src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) · [`FlywaySchemaAndSeedIntegrationTest`](./src/test/java/io/github/atengk/solid/FlywaySchemaAndSeedIntegrationTest.java) |
 | 认证与租户守卫 MockMvc | [`AuthFlowMockMvcTest`](./src/test/java/io/github/atengk/solid/AuthFlowMockMvcTest.java) · [`AuthSecurityEdgeMockMvcTest`](./src/test/java/io/github/atengk/solid/AuthSecurityEdgeMockMvcTest.java) · [`TenantRuntimeGuardMockMvcTest`](./src/test/java/io/github/atengk/solid/TenantRuntimeGuardMockMvcTest.java) | 登录路由闭环、一次一密、`101004` 防爆破、不透明句柄强退、`101005` 运行时阻断 | 端到端校验 `/admin/auth/**` 11 端点、IP/账号锁定详情、超管切租户、个人中心 `102002` 冲突与头像魔数 `100004` | [`AuthFlowMockMvcTest`](./src/test/java/io/github/atengk/solid/AuthFlowMockMvcTest.java) · [`AuthSecurityEdgeMockMvcTest`](./src/test/java/io/github/atengk/solid/AuthSecurityEdgeMockMvcTest.java) · [`TenantRuntimeGuardMockMvcTest`](./src/test/java/io/github/atengk/solid/TenantRuntimeGuardMockMvcTest.java) |
 | 5 级 `@DataScope` 真实 SQL 验证 | [`DataScopeH2SqlIntegrationTest`](./src/test/java/io/github/atengk/solid/DataScopeH2SqlIntegrationTest.java) · `DataScopeVerifyMapper` | H2 `AtengDataPermissionInnerInterceptor` + `SolidDataPermissionHandler` | 真实 SQL 验证 5 级策略、`DEPT+SELF` 括号防穿透、`create_by` 字符串分支、空角色/停用角色/无部门 `1=0` 与超限 `100003` 透传 | [`DataScopeH2SqlIntegrationTest`](./src/test/java/io/github/atengk/solid/DataScopeH2SqlIntegrationTest.java) |
 | 组织架构与 RBAC 集成/HTTP 闭环 | [`OrgAndRbacIntegrationTest`](./src/test/java/io/github/atengk/solid/OrgAndRbacIntegrationTest.java) · [`OrgAndRbacEdgeIntegrationTest`](./src/test/java/io/github/atengk/solid/OrgAndRbacEdgeIntegrationTest.java) · [`OrgAndRbacMockMvcTest`](./src/test/java/io/github/atengk/solid/OrgAndRbacMockMvcTest.java) | `/admin/system/{dept,post,menu,role}/**`、事务后置缓存清理与 MockMvc 鉴权 | 验证部门 `ancestors` 批量重算与脱敏 `/options`、岗位唯一与引用防删、菜单仅平台 `0`、半选套餐兼容、保留词 `102004`/内置 `102007`/越界 `102006` 与 3 参 `clearRoleCache` | [`OrgAndRbacIntegrationTest`](./src/test/java/io/github/atengk/solid/OrgAndRbacIntegrationTest.java) · [`OrgAndRbacEdgeIntegrationTest`](./src/test/java/io/github/atengk/solid/OrgAndRbacEdgeIntegrationTest.java) · [`OrgAndRbacMockMvcTest`](./src/test/java/io/github/atengk/solid/OrgAndRbacMockMvcTest.java) |
@@ -36,14 +38,18 @@ mvn clean test -B -T 1C -nsu
 
 ---
 
-## 2. 双模配置与安全加载架构
+## 2. 五档分层配置与安全加载架构
 
 ```mermaid
 flowchart LR
-    BASE["application.yml<br/>(公共安全基线 · 单租户默认 · S3+Guard)"] --> ENV{"激活环境"}
-    ENV -->|"test Profile"| TEST["application-test.yml<br/>(H2 MySQL模式 · 开Flyway · 关Redis/Storage)"]
-    ENV -->|"dev / prod"| LOCAL["optional:classpath:application-local.yml<br/>(.gitignore隔离 · DB/Redis/S3/Crypto凭据)"]
+    BASE["application.yml<br/>(容器 · 优雅停机 · 超时 · 安全基线)"] --> ENV{"激活 Profile"}
+    ENV -->|"dev (默认)"| DEV["application-dev.yml<br/>(开发连接池 · SQL诊断 · 本地CORS)"]
+    DEV -.->|"optional import"| LOCAL["application-local.yml<br/>(.gitignore隔离 · ${SOLID_*}联调覆盖)"]
+    ENV -->|"test (CI/单测)"| TEST["application-test.yml<br/>(H2 1~5池 · 开Flyway · 关Redis/Storage)"]
+    ENV -->|"prod (生产)"| PROD["application-prod.yml<br/>(强凭据Fail-Fast · 稳健池 · 文件滚动日志)"]
 ```
+
+- **优雅停机与最小暴露**：当前未引入 `spring-boot-starter-actuator`，因此显式设置 `ateng.boot.web.shutdown.mvc-endpoint-enabled: false` 关闭无鉴权 `/pre-stop` MVC 降级端点，仅由 `server.shutdown: graceful`（`20s`）与 `SmartLifecycle`（`drain-timeout: 10s`）接管 `SIGTERM` 流量排空；生产启动时亦接受 `ateng.boot.web.sanity-check` 零告警校验（详见 [`ADR-0005`](../docs/adr/0005-multi-env-configuration-and-pool-baseline.md)）。
 
 ---
 

@@ -12,12 +12,14 @@ import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
 import io.github.atengk.solid.system.entity.SysDept;
 import io.github.atengk.solid.system.entity.SysLoginLog;
+import io.github.atengk.solid.system.entity.SysOperLog;
 import io.github.atengk.solid.system.entity.SysRole;
 import io.github.atengk.solid.system.entity.SysRoleMenu;
 import io.github.atengk.solid.system.entity.SysUser;
 import io.github.atengk.solid.system.entity.SysUserRole;
 import io.github.atengk.solid.system.mapper.SysDeptMapper;
 import io.github.atengk.solid.system.mapper.SysLoginLogMapper;
+import io.github.atengk.solid.system.mapper.SysOperLogMapper;
 import io.github.atengk.solid.system.mapper.SysRoleMapper;
 import io.github.atengk.solid.system.mapper.SysRoleMenuMapper;
 import io.github.atengk.solid.system.mapper.SysUserMapper;
@@ -99,6 +101,8 @@ class AuthFlowMockMvcTest {
     private SysUserRoleMapper sysUserRoleMapper;
     @Autowired
     private SysLoginLogMapper sysLoginLogMapper;
+    @Autowired
+    private SysOperLogMapper sysOperLogMapper;
 
     private String superAdminToken;
 
@@ -220,6 +224,7 @@ class AuthFlowMockMvcTest {
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.userId").isString())
                 .andExpect(jsonPath("$.data.tenantId").value("0"))
+                .andExpect(jsonPath("$.data.tenantEnabled").value(false))
                 .andExpect(jsonPath("$.data.username").value("superadmin"))
                 .andExpect(jsonPath("$.data.passwordNeedsChange").value(true))
                 .andExpect(jsonPath("$.data.roles[0]").value("super_admin"))
@@ -351,6 +356,8 @@ class AuthFlowMockMvcTest {
                         .header("satoken-admin", superAdminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200));
+
+        awaitKickoutOperateLog(targetSessionId);
     }
 
     @Test
@@ -447,5 +454,24 @@ class AuthFlowMockMvcTest {
             Thread.sleep(50);
         }
         assertThat(logs).extracting(SysLoginLog::getMsg).contains("登录成功", "退出登录成功");
+    }
+
+    private void awaitKickoutOperateLog(String sensitiveSessionId) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + Duration.ofSeconds(5).toMillis();
+        List<SysOperLog> logs = List.of();
+        while (System.currentTimeMillis() < deadline) {
+            logs = sysOperLogMapper.selectList(Wrappers.<SysOperLog>lambdaQuery()
+                    .eq(SysOperLog::getModule, "在线会话")
+                    .orderByDesc(SysOperLog::getId));
+            if (logs != null && !logs.isEmpty()) {
+                SysOperLog latest = logs.get(0);
+                assertThat(latest.getRequestUrl()).isEqualTo("/admin/auth/online/{sessionId}");
+                assertThat(latest.getRequestUrl()).doesNotContain(sensitiveSessionId);
+                assertThat(latest.getRequestParams()).contains("[EXCLUDED]").doesNotContain(sensitiveSessionId);
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("等待强退在线会话操作审计落库超时");
     }
 }

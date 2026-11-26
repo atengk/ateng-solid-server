@@ -5,6 +5,7 @@ import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.audit.OperateLogUrlStrategy;
 import io.github.atengk.solid.auth.request.OnlineSessionQuery;
 import io.github.atengk.solid.auth.service.OnlineSessionService;
 import io.github.atengk.solid.auth.vo.OnlineSessionVO;
@@ -48,7 +49,13 @@ public class OnlineSessionController {
      * @return 空成功响应
      */
     @SaCheckPermission("auth:online:kickout")
-    @OperateLog(module = "在线会话", type = OperateTypeEnum.DELETE, description = "强退在线会话")
+    @OperateLog(
+            module = "在线会话",
+            type = OperateTypeEnum.DELETE,
+            description = "强退在线会话",
+            excludeParams = {"sessionId"},
+            urlStrategy = OperateLogUrlStrategy.BEST_MATCHING_PATTERN
+    )
     @DeleteMapping("/{sessionId}")
     public Result<Void> kickout(@PathVariable String sessionId) {
         onlineSessionService.kickout(sessionId);

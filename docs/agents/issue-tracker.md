@@ -5,7 +5,7 @@
 > **单仓统一工单 + 多仓物理隔离源码**：
 > - **严禁在 `atengk/ateng-solid-server` 重复创建同类编码实现单**，请统一操作 `-R atengk/ateng-solid` 并在标题使用 `[server]` 前缀；
 > - 后端源码开发、本地测试、Git 提交与推送仍严格在 `ateng-solid-server` 独立仓库内执行；
-> - **底层缺口联动**：开发过程中若发现 `ateng-boot` 或 `ateng-cloud` 存在基础设施能力缺失或缺陷，严禁在本仓编写绕过补丁，须立即按 [`foundation-first-gate.md`](./foundation-first-gate.md) 暂停受阻特性并向对应底座仓库（`atengk/ateng-boot` / `atengk/ateng-cloud`）提交通用化 Issue。
+> - **底层缺口联动**：开发过程中若发现 `ateng-boot` 或 `ateng-cloud` 存在基础设施能力缺失或缺陷，严禁在本仓编写绕过补丁，须按 [`foundation-first-gate.md`](./foundation-first-gate.md) 向对应底座仓库（`atengk/ateng-boot` / `atengk/ateng-cloud`）提交通用化 Issue 并先在底座 `dev` 完成改造测试；刷新 `-SNAPSHOT` 后本仓可在 `dev` 继续提交与关单，合入 `main` 前锁回正式版。
 
 ---
 
@@ -17,7 +17,7 @@
 - **关联父子工单（Sub-issues）**：`gh issue create -R atengk/ateng-solid --parent <parent> ...` 或 `gh issue edit <parent> -R atengk/ateng-solid --add-sub-issue <child>`；不支持时在子单顶部注明 `Part of #<parent>`
 - **阻塞依赖（Blocking）**：优先使用原生依赖 `gh issue create -R atengk/ateng-solid --blocked-by "<n1>,<n2>"` 或 `gh issue edit <child> -R atengk/ateng-solid --add-blocked-by <blocker>`；查询未关闭阻塞数：`gh issue view <n> -R atengk/ateng-solid --json blockedBy --jq '[.blockedBy.nodes[] | select(.state == "OPEN")] | length'`；不可用时回退至正文顶部 `Blocked by: #<n>`
 - **评论与状态流转**：`gh issue comment <number> -R atengk/ateng-solid -F <file>`、`gh issue edit <number> -R atengk/ateng-solid --add-label "<add>" --remove-label "<remove>"`、`gh issue edit <number> -R atengk/ateng-solid --add-assignee "@me"`
-- **关闭工单**：先评论交付验证摘要 `gh issue comment <number> -R atengk/ateng-solid -F <summary-file>`，再执行 `gh issue close <number> -R atengk/ateng-solid`
+- **关闭工单**：先评论交付验证摘要 `gh issue comment <number> -R atengk/ateng-solid -F <summary-file>`，再执行 `gh issue close <number> -R atengk/ateng-solid`（关联底座改动已提交底座 `dev` 并通过底座单测，且本仓已提交 `dev` 并通过本地全量测试即可关单）
 
 > **目标仓库校验**：在本子仓目录执行工单命令必须显式携带 `-R atengk/ateng-solid`，严禁误建至子仓或第三方上游仓。
 

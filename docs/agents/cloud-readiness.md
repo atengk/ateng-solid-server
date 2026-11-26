@@ -41,4 +41,4 @@ ateng-solid-server/
 5. **网关 `Same-Token` 与超管切租户协同**：单体设 `ateng.boot.satoken.same-token.enabled=false`；微服务启动壳设为 `true` 配合网关签发 `SA-SAME-TOKEN`（`ateng-cloud#202`），并协同网关集中鉴权与下游 `AtengSaTokenInterceptor` 租户头防重复覆盖（`ateng-cloud#201`）。
 6. **配置收口与 BOM 声明顺序**：业务配置收口于 `io.github.atengk.solid.*.properties.*`（前缀 `ateng.solid.*`，支持 `Duration`/`DataSize`，禁 `@RefreshScope` 与零散 `@Value`，使用 `spring.config.import`）；未来并存 `ateng-cloud-bom` 时，父 `pom.xml` `<dependencyManagement>` 必须将 **`ateng-boot-bom` 声明在 `ateng-cloud-bom` 之前**，防止旧传递基线覆写新版 `ateng-boot`。
 
-> 演进中遇 `ateng-boot` / `ateng-cloud` 能力缺口或缺陷，遵循 [`foundation-first-gate.md`](./foundation-first-gate.md) 立即停工提单。
+> 演进中遇 `ateng-boot` / `ateng-cloud` 能力缺口或缺陷，遵循 [`foundation-first-gate.md`](./foundation-first-gate.md) 先在底座本地改造、提单并提交底座 `dev`，合入 `main` 前锁回正式版。

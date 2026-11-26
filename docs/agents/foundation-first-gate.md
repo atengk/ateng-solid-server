@@ -1,6 +1,6 @@
-# 底层缺口即停工与跨仓联调 SOP (foundation-first-gate.md)
+# 底层零补丁与跨仓联调门禁 SOP (foundation-first-gate.md)
 
-> **唯一真源**：维护于根仓 `ateng-solid/docs/agents/foundation-first-gate.md`，由 `bash scripts/workspace.sh sync-rules` 单向同步至各子仓 `docs/agents/foundation-first-gate.md`；战略背景见根仓 `docs/adr/0004-foundation-driven-framework-coevolution.md`。
+> **唯一真源**：维护于根仓 `ateng-solid/docs/agents/foundation-first-gate.md`，由 `bash scripts/workspace.sh sync-rules` 单向同步至各子仓 `docs/agents/foundation-first-gate.md`；战略背景与 `2026-11-26` 修订说明见根仓 `docs/adr/0004-foundation-driven-framework-coevolution.md`。
 
 ---
 
@@ -16,38 +16,38 @@
 
 ---
 
-## 2. 触发停工判定边界
+## 2. 零补丁边界判定（先改底座 vs 上层自配）
 
-### 必须立即停工提单（Zero Workaround）
+### 必须先改底座（Zero Workaround · 禁写上层补丁）
 1. **核心基础设施缺失或扩展点不足**：多账号认证路由、超管角色可配置化、`@DataScope` 与拦截器协同、未登录租户头/超管切租户 SPI、防爆破与多租户缓存隔离、网关鉴权/`Same-Token`/Feign/Dubbo 异常透传、前端 HTTP 解包/长整型防截断/无头 Composables/`Ateng*` 通用组件扩展点等。
 2. **底座 Defect、安全或并发风险**：硬编码越权风险、ThreadLocal/异步上下文泄漏、`synchronized` 虚拟线程 Pinning、依赖共生崩溃、缓存多租户串味等。
 3. **跨两处及以上复用的纯技术能力**。
 
-### 允许上层自行配置（无需停工）
+### 允许上层自行配置（无需改底座）
 - 纯业务校验、实体/DTO 编排、路由表组装；
 - 底座已暴露显式配置项、SPI、标准插槽或回调 Prop（如 `superAdminRoles: ['super_admin']`、`iconResolver`、`OperateLogStorageProvider`、`path-prefix`）。
 
 ---
 
-## 3. 五步停工闭环与解封四项验收
+## 3. 五步本地协同闭环与 `main` 发版四项验收
 
-1. **停工与范围隔离**：立即暂停受该缺口阻断的上层特性编码（正交的 Spec 设计或未受阻模块可继续推进）。
-2. **源码实测与查重**：核查对应底座源码与 GitHub Issues，定位类/方法锚点并提炼通用、向后兼容方案。
-3. **建单与登记**：执行 `gh issue create -R atengk/<repo>` 提交 Issue，并同步登记至根仓 `docs/specs/foundation-enhancements-checklist.md`。
-4. **底座优先开发与递进发版**：在底座仓完成改造与独立验证；联调验证可按第 4 节 SOP 进行，但**上层正式代码必须在底座发布递进正式版并锁定正式版本号后才可提交合入**（`dev`/`main` 严禁残留 `-SNAPSHOT` 或本地 `yalc`/路径依赖）。
-5. **解封前四项双轴验收（全绿方可恢复开工）**：
+1. **禁止上层 Hack（局部聚焦底座）**：暂停在上层编写绕过补丁（不冻结 Spec、其他模块或待联调后的上层编码推进）。
+2. **源码实测与建单留痕**：核查对应底座源码与 GitHub Issues，提炼通用向后兼容方案，执行 `gh issue create -R atengk/<repo>` 建单，并在根仓 `docs/specs/foundation-enhancements-checklist.md` 登记待锁版底座项。
+3. **底座本地改造与 `dev` 协同提交**：在底座仓 `dev` 完成改造、通过底座独立单测并**本地提交至底座 `dev` 分支**；按第 4 节 SOP 刷新本地 `-SNAPSHOT` / `yalc` 后，上层即可直接编码、跑绿本地离线全量测试，并**正常提交至上层 `dev` 分支**（`dev` 允许保留 `-SNAPSHOT` / `file:.yalc`；联调期间远端 `dev` CI 暂红属已知可接受状态）。
+4. **特性/缺陷 Issue 独立闭环**：上层 `[server]` / `[admin-web]` 业务与缺陷 Issue 在同时满足“**关联底座改动已提交至底座 `dev` 并通过单测** + **本仓改动已提交至 `dev` 且本地全量测试全绿**”后，即可立即关闭，无需等待底座发布 Maven Central / npm 正式版；底座待发版项集中由增强清单与发版收口工单追踪。
+5. **`main` 合入与发版前四项双轴验收（全绿方可合并 `main` / 打 Tag）**：
    - **无项目污染**：底座源码、配置、测试零 `ateng-solid` 专属命名；
    - **独立可运行与向后兼容**：底座单测与 Sample 脱离 `ateng-solid` 独立跑通，不破坏既有默认行为；
-   - **正式版闭环**：底座已完成递进正式发布（严禁覆盖旧版本号），上层已锁定新正式版；
+   - **正式版闭环**：底座已完成递进正式发布（严禁覆盖旧版本号），上层已还原锁定新正式版；
    - **上层纯净**：上层仅保留标准配置或薄 SPI/回调接入，无临时兼容判断。
 
 ---
 
-## 4. 跨仓可逆本地联调 SOP（未发版前先行验证）
+## 4. 跨仓可逆本地联调 SOP（`dev` 协同 ➔ `main` 锁版）
 
 | 环节 | 后端（`ateng-boot` / `ateng-cloud` ➔ `ateng-solid-server`） | 前端（`ateng-ui` ➔ `ateng-solid-admin-web`） |
 | :--- | :--- | :--- |
 | **本地产物推送** | 底座切换至递增 **`-SNAPSHOT`** 版本（如 `1.2.1-SNAPSHOT`）执行 `mvn install -DskipTests` | 在 `ateng-ui` 先执行 **`pnpm pack`** 消解 `workspace:*`，解包后执行 **`yalc publish --push`** |
 | **避坑红线** | 严禁使用已发布或即将发布的正式版本号反复 `mvn install`（防 `~/.m2` 脏读） | 严禁在 `ateng-ui` 子包裸跑 `yalc push`（会残留 `workspace:*`），严禁 `pnpm link`（防双 Vue 实例） |
-| **上层接入刷新** | `ateng-solid-server/pom.xml` 临时切至 `-SNAPSHOT` 联调 | 执行 `yalc add @atengk/...` 接入；代码未刷新时运行 `pnpm dev:force`（`vite --force`）清预构建缓存 |
-| **退出与提交守门** | 底座发正式版后改回正式版本号；`.githooks/pre-commit` 自动拦截含底座 `-SNAPSHOT` 的 `pom.xml` | 底座发 npm 正式版后执行 `yalc remove --all && pnpm up @atengk/*`；`.githooks/pre-commit` 自动拦截 `file:.yalc`/`file:../`/`link:` |
+| **上层接入与 `dev` 提交** | `ateng-solid-server/pom.xml` 切至 `-SNAPSHOT` 联调；通过本地 `mvn clean test` 后可直接提交 `dev` | 执行 `yalc add @atengk/...` 接入；代码未刷新时运行 `pnpm dev:force`；通过本地四合一检查后可直接提交 `dev` |
+| **还原锁版与 `main` 守门** | 合并 `main` 前待底座发正式版并锁回正式版本号；`.githooks/pre-commit`（`main`）、`pre-push`（`main`/`v*`）、`main` CI 与 `release.yml` 硬拦截 `-SNAPSHOT` | 合并 `main` 前待底座发 npm 正式版后执行 `yalc remove --all && pnpm up @atengk/*`；`.githooks/pre-commit`（`main`）、`pre-push`（`main`/`v*`）、`main` CI 与 `release.yml` 硬拦截 `file:.yalc`/`file:../`/`link:`/`.tgz` |

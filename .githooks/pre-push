@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Git 推送前主干底座版本守门钩子 (Pre-push Hook)
+#
+# 拦截将仍依赖 ateng-boot / ateng-cloud -SNAPSHOT 的提交推送至 main / release/*
+# 分支或任意版本标签，弥补 merge dev -> main 跳过 pre-commit 的场景。
+#
+# @author Ateng
+# @since 2026-11-26
+# ==============================================================================
+
+set -eo pipefail
+
+ZERO_SHA="0000000000000000000000000000000000000000"
+
+check_commit_poms() {
+  local commit_sha="$1"
+  local target_ref="$2"
+  local poms
+  poms=$(git ls-tree -r --name-only "$commit_sha" | grep -E '(^|/)pom\.xml$' || true)
+  [ -n "$poms" ] || return 0
+
+  while IFS= read -r pom; do
+    [ -n "$pom" ] || continue
+    if git show "$commit_sha:$pom" | grep -Eq '<ateng-(boot|cloud)\.version>[^<]*-SNAPSHOT</ateng-(boot|cloud)\.version>'; then
+      printf "\n[ERROR] 禁止向 %s 推送仍依赖底座 -SNAPSHOT 版本的提交 (%s -> %s)！\n" "$target_ref" "$commit_sha" "$pom" >&2
+      printf "请先待底座发版并锁回正式版本号后再合入主干或发版。\n\n" >&2
+      exit 1
+    fi
+    if git show "$commit_sha:$pom" | tr '\n' ' ' | grep -Eq '<artifactId>ateng-(boot|cloud)-[a-z0-9-]+</artifactId>[[:space:]]*<version>[^<]*-SNAPSHOT</version>'; then
+      printf "\n[ERROR] 禁止向 %s 推送直接引用底座子模块 -SNAPSHOT 的提交 (%s -> %s)！\n" "$target_ref" "$commit_sha" "$pom" >&2
+      printf "请先移除临时 SNAPSHOT 版本锁定后再合入主干或发版。\n\n" >&2
+      exit 1
+    fi
+  done <<< "$poms"
+}
+
+while IFS=' ' read -r _local_ref local_sha remote_ref _remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+  [ "$local_sha" = "$ZERO_SHA" ] && continue
+
+  case "${remote_ref:-}" in
+    refs/heads/main|refs/heads/release/*|refs/tags/*)
+      check_commit_poms "$local_sha" "$remote_ref"
+      ;;
+    *)
+      ;;
+  esac
+done
+
+exit 0

@@ -1,0 +1,127 @@
+# ==============================================================================
+# 生产环境配置基线（所有敏感凭据与内部地址必须通过外部环境变量注入，零默认值 Fail-Fast）
+# ==============================================================================
+
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${SOLID_DB_HOST}:${SOLID_DB_PORT:3306}/${SOLID_DB_NAME:ateng_solid}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=${SOLID_DB_USE_SSL:true}&allowPublicKeyRetrieval=${SOLID_DB_ALLOW_PUBLIC_KEY_RETRIEVAL:false}
+    username: ${SOLID_DB_USERNAME}
+    password: ${SOLID_DB_PASSWORD}
+    hikari:
+      minimum-idle: ${SOLID_DB_POOL_MIN:5}
+      maximum-pool-size: ${SOLID_DB_POOL_MAX:20}
+      connection-timeout: ${SOLID_DB_CONNECTION_TIMEOUT_MS:10000}
+      validation-timeout: ${SOLID_DB_VALIDATION_TIMEOUT_MS:3000}
+      idle-timeout: ${SOLID_DB_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${SOLID_DB_MAX_LIFETIME_MS:1680000}
+      keepalive-time: ${SOLID_DB_KEEPALIVE_TIME_MS:300000}
+      leak-detection-threshold: ${SOLID_DB_LEAK_DETECTION_MS:30000}
+  data:
+    redis:
+      host: ${SOLID_REDIS_HOST}
+      port: ${SOLID_REDIS_PORT:6379}
+      password: ${SOLID_REDIS_PASSWORD}
+      database: ${SOLID_REDIS_DATABASE:0}
+      lettuce:
+        pool:
+          enabled: true
+          max-active: ${SOLID_REDIS_POOL_MAX:16}
+          max-idle: ${SOLID_REDIS_POOL_MAX_IDLE:8}
+          min-idle: ${SOLID_REDIS_POOL_MIN_IDLE:4}
+          max-wait: ${SOLID_REDIS_POOL_MAX_WAIT:3s}
+          time-between-eviction-runs: 30s
+  flyway:
+    # 生产环境默认关闭自动 DDL 迁移，单实例冷启动或运维发布窗口按需显式打开
+    enabled: ${SOLID_FLYWAY_ENABLED:false}
+  h2:
+    console:
+      enabled: false
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+knife4j:
+  enable: false
+
+ateng:
+  boot:
+    core:
+      logging:
+        console:
+          enabled: true
+        file:
+          enabled: ${SOLID_LOG_FILE_ENABLED:true}
+          path: ${SOLID_LOG_PATH:logs}
+          max-file-size: ${SOLID_LOG_MAX_FILE_SIZE:100MB}
+          max-history: ${SOLID_LOG_MAX_HISTORY:30}
+          total-size-cap: ${SOLID_LOG_TOTAL_SIZE_CAP:10GB}
+          split-error: true
+          clean-history-on-start: false
+    async:
+      concurrency-limit: ${SOLID_ASYNC_CONCURRENCY_LIMIT:256}
+    redis:
+      key-prefix: ${SOLID_REDIS_KEY_PREFIX:solid:}
+      redisson:
+        threads: ${SOLID_REDISSON_THREADS:0}
+        netty-threads: ${SOLID_REDISSON_NETTY_THREADS:0}
+        connection-pool-size: ${SOLID_REDISSON_POOL_MAX:32}
+        connection-minimum-idle-size: ${SOLID_REDISSON_POOL_MIN:8}
+    satoken:
+      token:
+        active-timeout: 30m
+      login-defense:
+        enabled: true
+    web:
+      log:
+        enabled: false
+      payload-log:
+        enabled: false
+      slow-request:
+        enabled: true
+        threshold: 3s
+      cors:
+        enabled: ${SOLID_CORS_ENABLED:false}
+        allow-localhost: false
+        allow-credentials: false
+        allowed-origins: ${SOLID_CORS_ALLOWED_ORIGINS:}
+      sanity-check:
+        enabled: true
+    mybatis-plus:
+      sql-log:
+        enabled: false
+      slow-sql:
+        enabled: true
+        threshold: 1s
+        format-sql: false
+        mask-sensitive: true
+        async-enabled: true
+      block-attack:
+        enabled: true
+      crypto:
+        secret-key: ${SOLID_CRYPTO_SECRET_KEY}
+    storage:
+      type: ${SOLID_STORAGE_TYPE:s3}
+      s3:
+        endpoint: ${SOLID_S3_ENDPOINT}
+        bucket: ${SOLID_S3_BUCKET}
+        access-key: ${SOLID_S3_ACCESS_KEY}
+        secret-key: ${SOLID_S3_SECRET_KEY}
+        path-style: ${SOLID_S3_PATH_STYLE:true}
+        auto-create-bucket: ${SOLID_S3_AUTO_CREATE_BUCKET:false}
+  solid:
+    tenant:
+      enabled: ${SOLID_TENANT_ENABLED:false}
+    auth:
+      captcha-enabled: ${SOLID_AUTH_CAPTCHA_ENABLED:true}
+      session-handle-secret: ${SOLID_AUTH_SESSION_HANDLE_SECRET}
+    init:
+      enabled: ${SOLID_INIT_ENABLED:true}
+
+logging:
+  level:
+    root: INFO
+    io.github.atengk.solid: INFO

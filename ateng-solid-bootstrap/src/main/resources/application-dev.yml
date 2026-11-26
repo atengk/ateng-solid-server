@@ -1,3 +1,56 @@
+spring:
+  config:
+    import: "optional:classpath:application-local.yml"
+  datasource:
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 10
+      leak-detection-threshold: 10000
+  data:
+    redis:
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 8
+          max-idle: 4
+          min-idle: 2
+          max-wait: 3s
+          time-between-eviction-runs: 30s
+
+ateng:
+  boot:
+    async:
+      concurrency-limit: 64
+    redis:
+      redisson:
+        threads: 4
+        netty-threads: 4
+        connection-pool-size: 16
+        connection-minimum-idle-size: 4
+    satoken:
+      token:
+        active-timeout: 2h
+    web:
+      log:
+        enabled: true
+      payload-log:
+        enabled: false
+      cors:
+        enabled: true
+        allow-localhost: true
+        allow-credentials: false
+        allowed-origins:
+          - http://127.0.0.1:5173
+          - http://localhost:5173
+    mybatis-plus:
+      sql-log:
+        enabled: true
+        level: INFO
+        format-sql: true
+        mask-sensitive: true
+        show-call-location: true
+        max-sql-length: 4096
+
 logging:
   level:
     root: INFO

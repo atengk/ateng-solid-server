@@ -32,6 +32,12 @@
             <artifactId>ateng-boot-flyway</artifactId>
         </dependency>
 
+        <!-- Redis Lettuce 连接池支撑（版本由 Spring Boot BOM 纳管，显式引入以激活 spring.data.redis.lettuce.pool.*） -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+
         <!-- 数据库驱动与 Flyway MySQL 适配 -->
         <dependency>
             <groupId>com.mysql</groupId>

@@ -14,7 +14,7 @@
   - `ateng-solid-bootstrap`（单体启动宿主、双模配置、事件桥接与 ArchUnit 守卫）。
 - **跨模块硬边界**：严禁跨模块注入对方 `Mapper`、跨模块 SQL JOIN 或数据库物理外键；二开/扩展（`ext-*`/`biz-*`）通过独立 Maven 模块 + `AutoConfiguration.imports` + SPI 装配，不改内核源码、不向内核主表加列（首期不建空目录）。
 - **依赖克制**：按需引入 `ateng-boot-*` Starter（`core`/`web`/`mybatis-plus`/`redis`/`satoken`/`excel`/`storage`/`flyway`）；严禁引入 `ateng-boot-all`、首期 `ateng-boot-observability`、单体业务模块内 `ateng-cloud-*` 运行时依赖，以及 `hutool-all`/`guava`/`commons-collections`；不强依赖 `ateng-boot-openapi`。
-- **底层缺口即停工（Zero Workaround）**：遇 `ateng-boot` / `ateng-cloud` 能力不足或缺陷，立即暂停受阻编码并向上游提通用 Issue（严禁上层补丁将就，严禁底座写死本项目约定）；正式提交前必须锁回递进正式版（`.githooks/pre-commit` 拦截 `-SNAPSHOT`）。
+- **底层零补丁与主干锁版门禁（Zero Workaround, Lock on `main`）**：遇 `ateng-boot` / `ateng-cloud` 能力不足或缺陷，严禁上层补丁将就、严禁底座写死本项目约定，应先在底座本地改造并提交底座 `dev`；刷新 `-SNAPSHOT` 后可在 `dev` 继续开发、自测与提交（允许联调期远端 `dev` CI 暂红），**合入 `main` 与发版前必须锁回递进正式版**（由 `main` `pre-commit`、`pre-push`、`main` CI 与 `release.yml` 拦截 `-SNAPSHOT`）。
 
 ---
 
@@ -35,7 +35,7 @@
 
 ## 3. 测试验证、配置与交付底线
 
-- **离线验证门禁**：交付前本地执行 `mvn clean test -B -T 1C -nsu`（H2 + 内存降级 + ArchUnit 全绿）；单测修改线程上下文后须在 `@AfterEach` 清理 `UserContextHolder`/`TenantContextHolder`/`DataPermissionContextHolder`/MDC。
+- **离线验证门禁**：交付前本地执行 `mvn clean test -B -T 1C -nsu`（H2 + 内存降级 + ArchUnit 全绿；`dev` 联调 `-SNAPSHOT` 期间允许远端 `dev` CI 暂红，以本地全绿为准，合入 `main` 前须锁版并恢复远端 CI 全绿）；单测修改线程上下文后须在 `@AfterEach` 清理 `UserContextHolder`/`TenantContextHolder`/`DataPermissionContextHolder`/MDC。
 - **双模配置与 Git**：真实凭据仅存 `.gitignore` 忽略的 `application-local.yml`（仓库仅留大写占位模板 `application-local.example.yml`）；`dev` 分支开发，未获明确指令不提交/推送，暂存显式指定文件路径（禁 `git add .`/`-A`），Conventional Commits。
 
 ---

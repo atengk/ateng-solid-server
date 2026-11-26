@@ -1,13 +1,36 @@
 server:
   port: 8080
+  shutdown: graceful
+  compression:
+    enabled: true
+    min-response-size: 2KB
+    mime-types:
+      - text/html
+      - text/xml
+      - text/plain
+      - text/css
+      - text/javascript
+      - application/javascript
+      - application/json
+      - application/xml
+  tomcat:
+    uri-encoding: UTF-8
+    connection-timeout: 15s
+    keep-alive-timeout: 30s
+    accept-count: 200
+    max-connections: 8192
+    max-swallow-size: 2MB
+    threads:
+      max: 200
+      min-spare: 10
 
 spring:
   application:
     name: ateng-solid-server
   profiles:
     active: dev
-  config:
-    import: "optional:classpath:application-local.yml"
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
   threads:
     virtual:
       enabled: true
@@ -18,6 +41,20 @@ spring:
   jackson:
     time-zone: GMT+8
     date-format: yyyy-MM-dd HH:mm:ss
+  datasource:
+    hikari:
+      pool-name: ateng-solid-hikari
+      auto-commit: true
+      connection-timeout: 10000
+      validation-timeout: 3000
+      idle-timeout: 600000
+      max-lifetime: 1680000
+      keepalive-time: 300000
+  data:
+    redis:
+      connect-timeout: 5s
+      timeout: 3s
+      shutdown-timeout: 100ms
   flyway:
     enabled: false
     locations:
@@ -27,7 +64,41 @@ spring:
 
 ateng:
   boot:
+    core:
+      logging:
+        enabled: true
+        console:
+          enabled: true
+      slow-alert:
+        enabled: true
+        default-threshold: 500ms
+        include-args: true
+        max-args-length: 1024
     web:
+      long-to-string: true
+      trace:
+        enabled: true
+        header-name: X-Trace-Id
+      shutdown:
+        enabled: true
+        drain-timeout: 10s
+        poll-interval: 100ms
+        smart-lifecycle-enabled: true
+        mvc-endpoint-enabled: false
+      slow-request:
+        enabled: true
+        threshold: 3s
+      payload-log:
+        enabled: false
+      operate-log:
+        enabled: true
+      security-headers:
+        enabled: true
+        content-type-options: true
+        frame-options: SAMEORIGIN
+        xss-protection: "1; mode=block"
+        referrer-policy: strict-origin-when-cross-origin
+        remove-server-header: true
       enum:
         enabled: true
         # 关闭底座内置默认控制器，交由 system 模块 SysEnumController 接管 /admin/system/enums 路由与 @SaCheckLogin 鉴权
@@ -36,16 +107,33 @@ ateng:
           - io.github.atengk.solid
           - io.github.atengk.boot.core.audit
     async:
+      wait-for-tasks-to-complete-on-shutdown: true
+      await-termination: 30s
       pools:
         password-hash:
           mode: platform
           core-pool-size: 4
           max-pool-size: 6
           queue-capacity: 64
+          wait-for-tasks-to-complete-on-shutdown: true
+          await-termination: 30s
+    redis:
+      key-prefix: ${SOLID_REDIS_KEY_PREFIX:solid:}
+      redisson:
+        ping-connection-interval: 30s
+        retry-attempts: 3
+        retry-interval: 1500ms
+        lock-watchdog-timeout: 30s
     satoken:
       primary-login-type: admin
       super-admin-roles:
         - super_admin
+      token:
+        timeout: 24h
+        active-timeout: 30m
+        is-concurrent: true
+        is-share: true
+        token-style: uuid
       permission-cache:
         tenant-scoped: true
       same-token:
@@ -65,6 +153,17 @@ ateng:
           admin:
             - /admin/**
     mybatis-plus:
+      block-attack:
+        enabled: true
+      pagination:
+        enabled: true
+        max-limit: 500
+        overflow: false
+      slow-sql:
+        enabled: true
+        threshold: 1s
+        format-sql: true
+        mask-sensitive: true
       data-permission:
         enabled: true
         failure-strategy: DENY_ALL

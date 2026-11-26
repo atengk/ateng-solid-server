@@ -32,6 +32,19 @@ jobs:
       - name: 检出源码
         uses: actions/checkout@v4
 
+      - name: 校验底座正式版锁定（禁止 -SNAPSHOT）
+        run: |
+          while IFS= read -r -d '' pom; do
+            if grep -Eq '<ateng-(boot|cloud)\.version>[^<]*-SNAPSHOT</ateng-(boot|cloud)\.version>' "$pom"; then
+              echo "::error file=$pom::发版前禁止依赖底座 -SNAPSHOT 版本！请先锁回已发布的正式版本号。"
+              exit 1
+            fi
+            if tr '\n' ' ' < "$pom" | grep -Eq '<artifactId>ateng-(boot|cloud)-[a-z0-9-]+</artifactId>[[:space:]]*<version>[^<]*-SNAPSHOT</version>'; then
+              echo "::error file=$pom::发版前禁止直接引用底座子模块 -SNAPSHOT 版本！"
+              exit 1
+            fi
+          done < <(find . -name 'pom.xml' -not -path '*/target/*' -print0)
+
       - name: 设置 Java 21 环境
         uses: actions/setup-java@v4
         with:

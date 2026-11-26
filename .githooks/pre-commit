@@ -2,8 +2,9 @@
 # ==============================================================================
 # Git 预提交底座版本防呆钩子 (Pre-commit Hook)
 #
-# 严禁将包含 ateng-boot / ateng-cloud 的 -SNAPSHOT 联调依赖合入 dev/main，
-# 确保底座正式发布并锁版后再提交上层变更（允许本项目自身 0.x.x-SNAPSHOT 版本号）。
+# dev 与日常特性分支放行本地 -SNAPSHOT 协同联调；仅拦截直接提交至 main / release/*
+# 分支中仍依赖 ateng-boot / ateng-cloud -SNAPSHOT 的变更（merge/fast-forward
+# 场景另由 pre-push 与 main CI 兜底拦截）。
 #
 # @author Ateng
 # @since 2026-11-20
@@ -11,21 +12,27 @@
 
 set -eo pipefail
 
-STAGED_POMS=$(git diff --cached --name-only --diff-filter=ACM | grep -E '(^|/)pom\.xml$' || true)
-if [ -n "$STAGED_POMS" ]; then
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [ "$CURRENT_BRANCH" != "main" ] && [[ ! "$CURRENT_BRANCH" =~ ^release/ ]]; then
+  exit 0
+fi
+
+TRACKED_POMS=$(git ls-files 'pom.xml' '*/pom.xml' || true)
+if [ -n "$TRACKED_POMS" ]; then
   while IFS= read -r pom; do
     [ -n "$pom" ] || continue
+    git cat-file -e ":$pom" 2>/dev/null || continue
     if git show ":$pom" | grep -Eq '<ateng-(boot|cloud)\.version>[^<]*-SNAPSHOT</ateng-(boot|cloud)\.version>'; then
-      printf "\n[ERROR] 检测到暂存文件 %s 仍依赖底座 -SNAPSHOT 版本！\n" "$pom" >&2
-      printf "请先完成底座正式发版，并将 pom.xml 锁回已发布的正式版本号后再提交。\n\n" >&2
+      printf "\n[ERROR] 检测到 %s 分支暂存区 %s 仍依赖底座 -SNAPSHOT 版本！\n" "$CURRENT_BRANCH" "$pom" >&2
+      printf "请先完成底座正式发版，并将 pom.xml 锁回已发布的正式版本号后再提交至主干。\n\n" >&2
       exit 1
     fi
     if git show ":$pom" | tr '\n' ' ' | grep -Eq '<artifactId>ateng-(boot|cloud)-[a-z0-9-]+</artifactId>[[:space:]]*<version>[^<]*-SNAPSHOT</version>'; then
-      printf "\n[ERROR] 检测到暂存文件 %s 中底座子模块直接引用了 -SNAPSHOT 版本！\n" "$pom" >&2
+      printf "\n[ERROR] 检测到 %s 分支暂存区 %s 中底座子模块直接引用了 -SNAPSHOT 版本！\n" "$CURRENT_BRANCH" "$pom" >&2
       printf "请先完成底座正式发版并移除临时 SNAPSHOT 版本锁定。\n\n" >&2
       exit 1
     fi
-  done <<< "$STAGED_POMS"
+  done <<< "$TRACKED_POMS"
 fi
 
 exit 0

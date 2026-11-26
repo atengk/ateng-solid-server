@@ -9,18 +9,33 @@ spring:
     url: jdbc:h2:mem:ateng_solid_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
     username: sa
     password: ""
+    hikari:
+      minimum-idle: 1
+      maximum-pool-size: 5
+      keepalive-time: 0
+      leak-detection-threshold: 0
   flyway:
     enabled: true
 
 ateng:
   boot:
+    async:
+      await-termination: 5s
     redis:
       enabled: false
     storage:
       enabled: false
+    web:
+      shutdown:
+        enabled: false
+        drain-timeout: 0s
+      cors:
+        enabled: false
     mybatis-plus:
       crypto:
         secret-key: ateng-solid-test-deterministic-key-32b
+      sql-log:
+        enabled: false
   solid:
     auth:
       captcha-enabled: false
