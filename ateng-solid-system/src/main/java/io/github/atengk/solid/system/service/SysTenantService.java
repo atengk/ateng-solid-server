@@ -172,6 +172,9 @@ public class SysTenantService {
     /**
      * 批量删除租户（阻断 {@code 0} 号租户抛出 {@code 102003}，提交后驱逐缓存并强退被删租户全部在线会话）。
      *
+     * <p>遵循租户软删除逻辑隔离归档边界：仅逻辑删除 {@code sys_tenant} 主表，不在请求事务内级联软删业务子表
+     * 或物理删除关联表（避免大租户长事务锁表、保持审计溯源与可恢复性，且提交后游标强退会话依赖未软删的 {@code sys_user}）。</p>
+     *
      * @param ids 逗号分隔的租户主键列表串
      */
     @Transactional(rollbackFor = Exception.class)

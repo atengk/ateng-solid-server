@@ -419,4 +419,126 @@ class TenantAndPackageIntegrationTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("已删除租户遗留角色权限不阻塞平台删除菜单且顺带清理 sys_role_menu，活跃租户仍拦截 102005")
+    void shouldAllowDeletingMenuReferencedOnlyByDeletedTenantWhileBlockingActiveTenantRef() throws Exception {
+        String superToken = loginAndGetToken(mockMvc, objectMapper, "000000", "superadmin", "Ateng@Test2026");
+
+        Long menuId = null;
+        Long platformRoleId = null;
+        Long pkgId = null;
+        Long deletedTenantId = null;
+
+        try {
+            // 1. 新增自定义菜单 M
+            MvcResult menuRes = mockMvc.perform(post("/admin/system/menu")
+                            .header("satoken-admin", superToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.ofEntries(
+                                    Map.entry("parentId", 1000L),
+                                    Map.entry("menuType", "C"),
+                                    Map.entry("title", "已删租户菜单验证"),
+                                    Map.entry("name", "SysDeletedTenantMenu"),
+                                    Map.entry("path", "/system/deleted-tenant-menu"),
+                                    Map.entry("component", "system/deleted-tenant-menu/index"),
+                                    Map.entry("sort", 96),
+                                    Map.entry("visible", 0),
+                                    Map.entry("status", 0),
+                                    Map.entry("keepAlive", true),
+                                    Map.entry("isExternal", false),
+                                    Map.entry("platformOnly", false)
+                            ))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andReturn();
+            menuId = Long.parseLong(
+                    objectMapper.readTree(menuRes.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                            .path("data").asText()
+            );
+
+            // 2. 负向守卫：平台租户 0 下活跃角色引用 M 时，删除菜单继续返回 102005
+            MvcResult roleRes = mockMvc.perform(post("/admin/system/role")
+                            .header("satoken-admin", superToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "roleName", "平台菜单引用测试角色",
+                                    "roleKey", "menu_ref_guard_role",
+                                    "sort", 90,
+                                    "status", 0,
+                                    "menuCheckStrictly", true,
+                                    "menuIds", List.of(1000L, menuId)
+                            ))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andReturn();
+            platformRoleId = Long.parseLong(
+                    objectMapper.readTree(roleRes.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                            .path("data").asText()
+            );
+
+            mockMvc.perform(delete("/admin/system/menu/{id}", menuId).header("satoken-admin", superToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(SystemResultCode.RESOURCE_IN_USE.getCode()));
+
+            mockMvc.perform(delete("/admin/system/role/{ids}", platformRoleId).header("satoken-admin", superToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+
+            // 3. 建套餐 P -> 建租户 T（自动创建 tenant_admin 并写入 sys_role_menu）-> 删租户 T -> 删套餐 P
+            pkgId = createPackageViaHttp(
+                    mockMvc, objectMapper, superToken, "删租户菜单清理测试套餐", true, List.of(1000L, menuId));
+            deletedTenantId = createTenantViaHttp(
+                    mockMvc, objectMapper, superToken, "DEL3499", "删租户菜单验证", pkgId, "del_menu_admin", "DelMenu@2026");
+
+            final Long activeMenuId = menuId;
+            final Long targetTenantId = deletedTenantId;
+            assertThat(TenantContextHolder.runWithoutTenant(
+                    () -> sysRoleMenuMapper.countActiveRoleReferencesByMenuId(activeMenuId)
+            )).isEqualTo(1L);
+
+            mockMvc.perform(delete("/admin/system/tenant/{ids}", targetTenantId).header("satoken-admin", superToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+
+            // 按逻辑隔离归档边界，被删租户名下 sys_role 仍维持 deleted = 0 且 sys_role_menu 仍暂存引用
+            Long archivedRoleCount = TenantContextHolder.runWithTenant(targetTenantId, () -> sysRoleMapper.selectCount(
+                    Wrappers.<SysRole>lambdaQuery().eq(SysRole::getTenantId, targetTenantId)
+            ));
+            assertThat(archivedRoleCount).isEqualTo(1L);
+            assertThat(loadTenantRoleMenuIds(sysRoleMenuMapper, targetTenantId)).contains(activeMenuId);
+
+            mockMvc.perform(delete("/admin/system/tenant-package/{ids}", pkgId).header("satoken-admin", superToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+
+            // 4. 删除菜单 M 应成功解除死锁并清理已删租户下该菜单残留的 sys_role_menu 关联
+            mockMvc.perform(delete("/admin/system/menu/{id}", activeMenuId).header("satoken-admin", superToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+
+            assertThat(TenantContextHolder.runWithoutTenant(() -> sysMenuMapper.selectById(activeMenuId))).isNull();
+            assertThat(loadTenantRoleMenuIds(sysRoleMenuMapper, targetTenantId)).doesNotContain(activeMenuId);
+        } finally {
+            if (deletedTenantId != null) {
+                jdbcTemplate.update("DELETE FROM sys_user_role WHERE tenant_id = ?", deletedTenantId);
+                jdbcTemplate.update("DELETE FROM sys_user WHERE tenant_id = ?", deletedTenantId);
+                jdbcTemplate.update("DELETE FROM sys_role_menu WHERE tenant_id = ?", deletedTenantId);
+                jdbcTemplate.update("DELETE FROM sys_role WHERE tenant_id = ?", deletedTenantId);
+                jdbcTemplate.update("DELETE FROM sys_dept WHERE tenant_id = ?", deletedTenantId);
+                jdbcTemplate.update("DELETE FROM sys_tenant WHERE id = ?", deletedTenantId);
+            }
+            if (pkgId != null) {
+                jdbcTemplate.update("DELETE FROM sys_tenant_package_menu WHERE package_id = ?", pkgId);
+                jdbcTemplate.update("DELETE FROM sys_tenant_package WHERE id = ?", pkgId);
+            }
+            if (platformRoleId != null) {
+                jdbcTemplate.update("DELETE FROM sys_role_menu WHERE role_id = ?", platformRoleId);
+                jdbcTemplate.update("DELETE FROM sys_role WHERE id = ?", platformRoleId);
+            }
+            if (menuId != null) {
+                jdbcTemplate.update("DELETE FROM sys_menu WHERE id = ?", menuId);
+            }
+        }
+    }
 }
