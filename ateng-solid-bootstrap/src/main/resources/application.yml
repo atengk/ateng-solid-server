@@ -124,6 +124,27 @@ ateng:
         retry-attempts: 3
         retry-interval: 1500ms
         lock-watchdog-timeout: 30s
+      two-level:
+        enabled: true
+        l1:
+          default-max-size: 5000
+          default-ttl: 5m
+          max-sizes:
+            "[satoken:permissions]": 5000
+            dict: 2000
+            config: 5000
+          ttls:
+            "[satoken:permissions]": 5m
+            dict: 5m
+            config: 5m
+        l2:
+          default-ttl: 30m
+          cache-null-values: true
+          null-ttl: 5m
+          jitter-enabled: true
+          max-jitter: 60s
+          ttls:
+            "[satoken:permissions]": 30m
     satoken:
       primary-login-type: admin
       super-admin-roles:

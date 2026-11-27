@@ -38,6 +38,12 @@
             <artifactId>commons-pool2</artifactId>
         </dependency>
 
+        <!-- Caffeine 高性能 L1 本地缓存引擎（版本由 Spring Boot BOM 纳管，激活 TwoLevelCacheManager W-TinyLFU L1 缓存） -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- 数据库驱动与 Flyway MySQL 适配 -->
         <dependency>
             <groupId>com.mysql</groupId>

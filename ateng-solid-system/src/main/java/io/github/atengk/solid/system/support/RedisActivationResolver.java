@@ -18,6 +18,17 @@ public final class RedisActivationResolver {
     }
 
     /**
+     * 判断当前环境是否启用 Redis（未显式配置 {@code ateng.boot.redis.enabled=false}）。
+     *
+     * @param environmentProvider Spring {@link Environment} 提供器
+     * @return Redis 处于激活态返回 {@code true}；显式关闭返回 {@code false}
+     */
+    public static boolean isRedisEnabled(ObjectProvider<Environment> environmentProvider) {
+        Environment environment = environmentProvider != null ? environmentProvider.getIfAvailable() : null;
+        return environment == null || environment.getProperty(REDIS_ENABLED_KEY, Boolean.class, Boolean.TRUE);
+    }
+
+    /**
      * 当且仅当 {@code ateng.boot.redis.enabled} 未显式关闭且容器中存在 {@link StringRedisTemplate} 时返回可用实例。
      *
      * @param redisProvider       {@link StringRedisTemplate} 提供器
@@ -28,8 +39,7 @@ public final class RedisActivationResolver {
             ObjectProvider<StringRedisTemplate> redisProvider,
             ObjectProvider<Environment> environmentProvider
     ) {
-        Environment environment = environmentProvider != null ? environmentProvider.getIfAvailable() : null;
-        if (environment != null && !environment.getProperty(REDIS_ENABLED_KEY, Boolean.class, Boolean.TRUE)) {
+        if (!isRedisEnabled(environmentProvider)) {
             return null;
         }
         return redisProvider != null ? redisProvider.getIfAvailable() : null;

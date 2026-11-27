@@ -6,6 +6,7 @@ import io.github.atengk.boot.core.properties.AsyncPoolProperties;
 import io.github.atengk.boot.core.properties.AsyncProperties;
 import io.github.atengk.boot.core.properties.CoreProperties;
 import io.github.atengk.boot.mybatisplus.properties.MybatisPlusProperties;
+import io.github.atengk.boot.redis.cache.twolevel.l1.L1MemoryCacheFactory;
 import io.github.atengk.boot.redis.properties.RedisProperties;
 import io.github.atengk.boot.satoken.properties.SaTokenProperties;
 import io.github.atengk.boot.storage.properties.StorageProperties;
@@ -149,6 +150,8 @@ class ConfigurationBaselineIntegrationTest {
     @DisplayName("应当正确装配 HikariCP 离线连接池、优雅停机策略与多环境分层配置基线")
     void shouldBindPoolAndMultiEnvironmentBaseline() throws IOException, ClassNotFoundException {
         assertThat(Class.forName("org.apache.commons.pool2.impl.GenericObjectPoolConfig")).isNotNull();
+        assertThat(Class.forName("com.github.benmanes.caffeine.cache.Caffeine")).isNotNull();
+        assertThat(L1MemoryCacheFactory.isCaffeinePresent()).isTrue();
 
         assertThat(dataSource).isInstanceOf(HikariDataSource.class);
         HikariDataSource hikari = (HikariDataSource) dataSource;
@@ -174,6 +177,24 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(redisProperties.getKeyPrefix()).isEqualTo("solid:");
         assertThat(redisProperties.getRedisson().getPingConnectionInterval()).isEqualTo(Duration.ofSeconds(30));
         assertThat(redisProperties.getRedisson().getLockWatchdogTimeout()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(redisProperties.getTwoLevel().isEnabled()).isTrue();
+        assertThat(redisProperties.getTwoLevel().getL1().getDefaultMaxSize()).isEqualTo(5000L);
+        assertThat(redisProperties.getTwoLevel().getL1().getDefaultTtl()).isEqualTo(Duration.ofMinutes(5));
+        assertThat(redisProperties.getTwoLevel().getL1().getMaxSizes())
+                .containsEntry("satoken:permissions", 5000L)
+                .containsEntry("dict", 2000L)
+                .containsEntry("config", 5000L);
+        assertThat(redisProperties.getTwoLevel().getL1().getTtls())
+                .containsEntry("satoken:permissions", Duration.ofMinutes(5))
+                .containsEntry("dict", Duration.ofMinutes(5))
+                .containsEntry("config", Duration.ofMinutes(5));
+        assertThat(redisProperties.getTwoLevel().getL2().getDefaultTtl()).isEqualTo(Duration.ofMinutes(30));
+        assertThat(redisProperties.getTwoLevel().getL2().isCacheNullValues()).isTrue();
+        assertThat(redisProperties.getTwoLevel().getL2().getNullTtl()).isEqualTo(Duration.ofMinutes(5));
+        assertThat(redisProperties.getTwoLevel().getL2().isJitterEnabled()).isTrue();
+        assertThat(redisProperties.getTwoLevel().getL2().getMaxJitter()).isEqualTo(Duration.ofSeconds(60));
+        assertThat(redisProperties.getTwoLevel().getL2().getTtls())
+                .containsEntry("satoken:permissions", Duration.ofMinutes(30));
         assertThat(mybatisPlusProperties.getBlockAttack().isEnabled()).isTrue();
         assertThat(mybatisPlusProperties.getSlowSql().isEnabled()).isTrue();
         assertThat(mybatisPlusProperties.getSqlLog().isEnabled()).isFalse();
