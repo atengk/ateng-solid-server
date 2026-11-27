@@ -11,6 +11,7 @@
 | **0003** | **后端单体与 `ateng-cloud` 微服务长期同源共存架构** | 🟢 Accepted | 确立同仓“共享业务核 + `bootstrap` 单体壳 + `ateng-solid-cloud/*` 微服务壳”长期共存布局、Dubbo/MQ 薄桥接与 Flyway 随域存放方案 | 全域模块、`bootstrap`、`ateng-solid-cloud` | [查看](./0003-monolith-and-cloud-coexistence-architecture.md) |
 | **0004** | **联系字段确定性加密（`@FieldEncrypt`）与精确检索边界** | 🟢 Accepted | 确立 `sys_user`/`sys_dept` 联系字段统一确定性 SIV 加密、`ContactFieldCrypto` 收口封装、列宽放宽（`128`/`255`）及手机号精确检索权衡 | `system`、`bootstrap` | [查看](./0004-deterministic-field-encryption-and-search-boundary.md) |
 | **0005** | **多环境配置分层、Redis 双池化装配与虚线程连接池定容基线** | 🟢 Accepted | 确立 `base+dev+test+prod+local` 五档隔离（`local` 仅随 `dev` 导入、`prod` 强凭据零默认值 Fail-Fast）、BOM 引入 `commons-pool2` 激活 Lettuce+Redisson 双池与 HikariCP 三档定容、无 Actuator 下关闭 `/pre-stop` MVC 端点 | `bootstrap`（联动 `admin-web`） | [查看](./0005-multi-env-configuration-and-pool-baseline.md) |
+| **0006** | **`ateng-boot-redis` 核心能力收敛、两级缓存分级与可选自适应降级基线** | 🟢 Accepted | 沉淀上层可选 Redis 自适应门面零改底座，全量收口至 `ateng.boot.redis.key-prefix`（`solid:`），启用 `Caffeine` + `TwoLevelCacheManager` 加速权限/字典/参数，`TenantStatusCache` 走纯 L2 `RedisCacheTemplate`，收敛初始化锁/审计幂等/集群导入信号量/批注双键与 `@RateLimiter` 限流基线 | `system`、`auth`、`bootstrap` | [查看](./0006-redis-capability-convergence-and-adaptive-degradation.md) |
 
 ---
 
