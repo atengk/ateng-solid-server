@@ -24,6 +24,7 @@
 | 持久层加密、迁移与引导验证 | [`FlywaySchemaAndSeedIntegrationTest`](./src/test/java/io/github/atengk/solid/FlywaySchemaAndSeedIntegrationTest.java) · [`ContactFieldEncryptPersistenceTest`](./src/test/java/io/github/atengk/solid/ContactFieldEncryptPersistenceTest.java) · [`SuperAdminBootstrapperIntegrationTest`](./src/test/java/io/github/atengk/solid/SuperAdminBootstrapperIntegrationTest.java) | 17 表迁移、58 条菜单种子、SIV 加密往返与超管首次启动引导 | 校验 17 张表与确定性种子落库、`"v1:..."` 密文写入、ORM 解密、多 `NULL` 放行、软删重建与超管一次性强随机口令幂等初始化 | [`FlywaySchemaAndSeedIntegrationTest`](./src/test/java/io/github/atengk/solid/FlywaySchemaAndSeedIntegrationTest.java) · [`ContactFieldEncryptPersistenceTest`](./src/test/java/io/github/atengk/solid/ContactFieldEncryptPersistenceTest.java) · [`SuperAdminBootstrapperIntegrationTest`](./src/test/java/io/github/atengk/solid/SuperAdminBootstrapperIntegrationTest.java) |
 | 架构守卫 | [`ArchitectureGuardTest`](./src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) | 9 条 ArchUnit 硬红线 | 阻断跨模块越权、Web/ORM 污染、字段注入、`@Value`/`@RefreshScope` 与 `Result` 契约污染 | [`ArchitectureGuardTest`](./src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
 | 错误码防碰撞 | [`ResultCodeSegmentTest`](./src/test/java/io/github/atengk/solid/ResultCodeSegmentTest.java) | 千位号段校验 + 类路径 `IResultCode` 全扫描 | 校验 `100xxx`/`101xxx`/`102xxx` 无越界且与底座全部错误码零重复 | [`ResultCodeSegmentTest`](./src/test/java/io/github/atengk/solid/ResultCodeSegmentTest.java) |
+| `local` 真实中间件验证 | [`LocalRedisCapabilityIntegrationTest`](./src/test/java/io/github/atengk/solid/LocalRedisCapabilityIntegrationTest.java) · [`LocalRateLimiterMockMvcTest`](./src/test/java/io/github/atengk/solid/LocalRateLimiterMockMvcTest.java) · [`LocalStorageIntegrationTest`](./src/test/java/io/github/atengk/solid/LocalStorageIntegrationTest.java) | `@Tag("local")` + `-Dsolid.local.test=true`（`dev` Profile + 动态前缀隔离） | 默认离线 `mvn test` 自动跳过；激活后实机验证真实 MySQL、Caffeine+Pub/Sub、L2 空哨兵、分布式锁/幂等/信号量、双键批注、Redisson 限流及 S3 上传/2h `inline` 预签名/事务回滚防孤儿/提交后删旧头像 | [`LocalRedisCapabilityIntegrationTest`](./src/test/java/io/github/atengk/solid/LocalRedisCapabilityIntegrationTest.java) · [`LocalRateLimiterMockMvcTest`](./src/test/java/io/github/atengk/solid/LocalRateLimiterMockMvcTest.java) · [`LocalStorageIntegrationTest`](./src/test/java/io/github/atengk/solid/LocalStorageIntegrationTest.java) |
 
 ---
 
@@ -33,7 +34,11 @@
 - **本地开发启动准备**：将 [`application-local.example.yml`](./src/main/resources/application-local.example.yml) 复制为同目录受忽略的 `application-local.yml`，填入本机 MySQL 8.4、Redis 8.x、S3/RustFS 与加解密密钥占位值即可启动。
 
 ```bash
+# 默认离线全模块验证（自动跳过 @Tag("local") 用例）
 mvn clean test -B -T 1C -nsu
+
+# 本地真实 MySQL + Redis + S3 专项实机验证（需提前就绪 application-local.yml 与 SOLID_* 环境变量）
+mvn test "-Dtest=LocalRedisCapabilityIntegrationTest,LocalRateLimiterMockMvcTest,LocalStorageIntegrationTest" "-Dsurefire.failIfNoSpecifiedTests=false" "-Dsolid.local.test=true" -B -nsu
 ```
 
 ---
