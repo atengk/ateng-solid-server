@@ -16,7 +16,7 @@
 - [后端工程规范 AGENTS.md](./AGENTS.md): 5 模块边界、Java 21 并发、安全与按需触发导航
 - [后端模块拓扑 CONTEXT-MAP.md](./CONTEXT-MAP.md): 模块依赖关系与领域边界地图
 - [后端项目门面 README.md](./README.md): 工程定位、MVP 范围与双模测试入口
-- [后端 ADR 看板](./docs/adr/README.md): 5 模块双装配、6 位错误码与持久化基线、单体与 Cloud 共存方案、确定性字段加密边界、五档配置与连接池基线
+- [后端 ADR 看板](./docs/adr/README.md): 5 模块双装配、6 位错误码与持久化基线、单体与 Cloud 共存方案、确定性字段加密边界、五档配置与连接池基线、Redis 能力收敛与自适应双模降级
 - [同源双装配守则](./docs/agents/cloud-readiness.md): `bootstrap` 与 `ateng-solid-cloud/*` 目录拓扑与六大并存接缝
 - [跨端通信与数据契约](./docs/agents/contracts.md): 统一响应、错误码段、`tenant_id BIGINT` 与三段式权限码
 - [编码规范、架构拆解与注释准则](./docs/agents/coding-standards.md): 复用提取阶梯、大类拆分线、设计模式选型、事务防 N+1 与文档/逻辑注释规范

@@ -22,6 +22,7 @@ import io.github.atengk.solid.system.support.ImportFeedbackStore.FeedbackFile;
 import io.github.atengk.solid.system.support.RoleViewSupport;
 import io.github.atengk.solid.system.support.SystemContextSupport;
 import io.github.atengk.solid.system.support.UserContactAndDictSupport;
+import io.github.atengk.solid.system.support.UserImportSemaphoreCoordinator;
 import io.github.atengk.solid.system.vo.ImportErrorVO;
 import io.github.atengk.solid.system.vo.ImportResultVO;
 import lombok.RequiredArgsConstructor;
@@ -38,10 +39,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 用户 Excel 500 行三段式并发原子导入与流式受权导出服务。
@@ -64,8 +63,6 @@ public class SysUserExcelService {
     public static final int MAX_IMPORT_FILE_BYTES = 2 * 1024 * 1024;
 
     private static final int DEFAULT_IMPORT_MAX_ROWS = 500;
-    private static final int DEFAULT_MAX_CONCURRENT_IMPORTS = 2;
-    private static final long SEMAPHORE_WAIT_SECONDS = 3L;
     private static final long HASH_TIMEOUT_SECONDS = 90L;
 
     private final SystemContextSupport contextSupport;
@@ -74,8 +71,7 @@ public class SysUserExcelService {
     private final UserBatchPersistHelper userBatchPersistHelper;
     private final ImportFeedbackStore importFeedbackStore;
     private final UserContactAndDictSupport userContactAndDictSupport;
-
-    private final AtomicReference<Semaphore> importSemaphoreRef = new AtomicReference<>();
+    private final UserImportSemaphoreCoordinator userImportSemaphoreCoordinator;
 
     /**
      * 执行三段式 500 行用户 Excel 整批原子导入。
@@ -221,18 +217,10 @@ public class SysUserExcelService {
         if (rows.isEmpty()) {
             return Collections.emptyList();
         }
-        Semaphore semaphore = resolveImportSemaphore();
-        boolean acquired;
-        try {
-            acquired = semaphore.tryAcquire(SEMAPHORE_WAIT_SECONDS, TimeUnit.SECONDS);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new BusinessException(CommonResultCode.TOO_MANY_REQUESTS, "批量导入排队被中断，请稍后重试", ex);
-        }
-        if (!acquired) {
-            throw new BusinessException(CommonResultCode.TOO_MANY_REQUESTS, "当前用户批量导入任务繁忙，请稍后重试");
-        }
+        return userImportSemaphoreCoordinator.executeWithPermit(() -> executeParallelHashTasks(rows, initPassword));
+    }
 
+    private List<PreparedImportUser> executeParallelHashTasks(List<ValidatedImportRow> rows, String initPassword) {
         try {
             List<CompletableFuture<String>> futures = new ArrayList<>(rows.size());
             for (int i = 0; i < rows.size(); i++) {
@@ -260,8 +248,6 @@ public class SysUserExcelService {
                 throw bizEx;
             }
             throw new BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, "批量导入密码加密计算失败", cause);
-        } finally {
-            semaphore.release();
         }
     }
 
@@ -296,18 +282,6 @@ public class SysUserExcelService {
                 ? systemProperties.getUser().getImportMaxRows()
                 : DEFAULT_IMPORT_MAX_ROWS;
         return configured > 0 ? configured : DEFAULT_IMPORT_MAX_ROWS;
-    }
-
-    private Semaphore resolveImportSemaphore() {
-        Semaphore existing = importSemaphoreRef.get();
-        if (existing != null) {
-            return existing;
-        }
-        int configured = systemProperties != null && systemProperties.getUser() != null
-                ? systemProperties.getUser().getMaxConcurrentImports()
-                : DEFAULT_MAX_CONCURRENT_IMPORTS;
-        Semaphore created = new Semaphore(Math.max(1, configured));
-        return importSemaphoreRef.compareAndSet(null, created) ? created : importSemaphoreRef.get();
     }
 
     /**

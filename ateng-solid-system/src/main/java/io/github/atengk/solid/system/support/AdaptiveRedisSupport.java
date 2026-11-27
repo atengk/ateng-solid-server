@@ -43,6 +43,7 @@ public class AdaptiveRedisSupport {
      */
     public static final int DEFAULT_LOCAL_MAX_CAPACITY = 10_000;
 
+    private static final String REDIS_ENABLED_KEY = "ateng.boot.redis.enabled";
     private static final Duration DEFAULT_LOCK_WAIT_TIME = Duration.ofSeconds(5);
 
     private final ObjectProvider<Environment> environmentProvider;
@@ -57,7 +58,8 @@ public class AdaptiveRedisSupport {
      * @return 若允许访问 Redis 返回 {@code true}；否则返回 {@code false}
      */
     public boolean isRedisActive() {
-        return RedisActivationResolver.isRedisEnabled(environmentProvider);
+        Environment environment = environmentProvider != null ? environmentProvider.getIfAvailable() : null;
+        return environment == null || environment.getProperty(REDIS_ENABLED_KEY, Boolean.class, Boolean.TRUE);
     }
 
     /**
@@ -178,7 +180,7 @@ public class AdaptiveRedisSupport {
         Objects.requireNonNull(loader, "loader 不能为空");
         Objects.requireNonNull(localFallbackLoader, "localFallbackLoader 不能为空");
 
-        RedisCacheTemplate template = resolveActiveTemplate(redisCacheTemplateProvider);
+        RedisCacheTemplate template = resolveActive(redisCacheTemplateProvider);
         if (template == null) {
             return localFallbackLoader.get();
         }
@@ -227,7 +229,7 @@ public class AdaptiveRedisSupport {
         if (localEvictAction != null) {
             localEvictAction.run();
         }
-        RedisCacheTemplate template = resolveActiveTemplate(redisCacheTemplateProvider);
+        RedisCacheTemplate template = resolveActive(redisCacheTemplateProvider);
         if (template != null) {
             evictL2Safely(template, key);
         }
@@ -244,13 +246,13 @@ public class AdaptiveRedisSupport {
      */
     public boolean tryExecuteWithLock(String lockKey, Duration waitTime, Runnable action) {
         Objects.requireNonNull(action, "action 不能为空");
-        DistributedLockTemplate lockTemplate = resolveActiveTemplate(distributedLockTemplateProvider);
+        DistributedLockTemplate lockTemplate = resolveActive(distributedLockTemplateProvider);
         if (lockTemplate == null || !StringUtils.hasText(lockKey)) {
             action.run();
             return true;
         }
 
-        Duration effectiveWait = waitTime != null && !waitTime.isNegative() ? waitTime : DEFAULT_LOCK_WAIT_TIME;
+        Duration effectiveWait = resolveLockWaitTime(waitTime);
         AtomicBoolean actionInvoked = new AtomicBoolean(false);
         AtomicReference<RuntimeException> actionFailure = new AtomicReference<>();
         try {
@@ -264,6 +266,30 @@ public class AdaptiveRedisSupport {
             action.run();
             return true;
         }
+    }
+
+    /**
+     * 通过 {@link DistributedLockTemplate} 争用严格互斥分布式锁并执行任务；
+     * 与 {@link #tryExecuteWithLock} 不同，当 Redis 关闭、锁模板未装配或加锁异常时<b>严禁无锁降级直通</b>，
+     * 以保护无数据库唯一约束兜底的集群状态修改（如集群信号量许可数启动校准）。
+     *
+     * @param lockKey  受 {@code ateng.boot.redis.key-prefix} 托管的相对分布式锁键
+     * @param waitTime 最长等待获取锁时长（空或负值时回落 {@code 5s}）
+     * @param action   持锁执行的业务逻辑
+     * @return 成功抢占锁并执行完毕返回 {@code true}；锁模板不可用或等待超时未抢到锁返回 {@code false}
+     */
+    public boolean tryExecuteStrictlyWithLock(String lockKey, Duration waitTime, Runnable action) {
+        Objects.requireNonNull(action, "action 不能为空");
+        DistributedLockTemplate lockTemplate = resolveActive(distributedLockTemplateProvider);
+        if (lockTemplate == null || !StringUtils.hasText(lockKey)) {
+            log.warn("DistributedLockTemplate 未启用或锁键为空，严格互斥模式中止执行: lockKey={}", lockKey);
+            return false;
+        }
+        return lockTemplate.tryExecute(lockKey, resolveLockWaitTime(waitTime), action::run);
+    }
+
+    private static Duration resolveLockWaitTime(Duration waitTime) {
+        return waitTime != null && !waitTime.isNegative() ? waitTime : DEFAULT_LOCK_WAIT_TIME;
     }
 
     /**
@@ -291,7 +317,7 @@ public class AdaptiveRedisSupport {
             return true;
         }
 
-        RedisIdempotentTemplate template = resolveActiveTemplate(redisIdempotentTemplateProvider);
+        RedisIdempotentTemplate template = resolveActive(redisIdempotentTemplateProvider);
         if (template == null) {
             return executeIdempotentLocally(key, action, localDedupFallback);
         }
@@ -365,12 +391,19 @@ public class AdaptiveRedisSupport {
 
     private TwoLevelCache resolveTwoLevelCache(String cacheSpace) {
         TwoLevelCacheManager manager = StringUtils.hasText(cacheSpace)
-                ? resolveActiveTemplate(twoLevelCacheManagerProvider)
+                ? resolveActive(twoLevelCacheManagerProvider)
                 : null;
         return manager != null ? manager.getTwoLevelCache(cacheSpace) : null;
     }
 
-    private <T> T resolveActiveTemplate(ObjectProvider<T> provider) {
+    /**
+     * 当且仅当 {@code ateng.boot.redis.enabled} 未显式关闭且容器中存在目标受管模板/工具时返回可用实例。
+     *
+     * @param provider 目标组件提供器
+     * @param <T>      目标组件类型
+     * @return 可用组件实例；Redis 已关闭或实例未装配时返回 {@code null}
+     */
+    public <T> T resolveActive(ObjectProvider<T> provider) {
         if (!isRedisActive() || provider == null) {
             return null;
         }

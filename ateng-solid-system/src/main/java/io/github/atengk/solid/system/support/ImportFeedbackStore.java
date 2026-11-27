@@ -3,7 +3,7 @@ package io.github.atengk.solid.system.support;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.util.IdUtil;
-import io.github.atengk.boot.core.util.JsonUtil;
+import io.github.atengk.boot.redis.util.RedisUtil;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.properties.SolidSystemProperties;
 import lombok.AllArgsConstructor;
@@ -12,8 +12,6 @@ import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.core.env.Environment;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -29,7 +27,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
 /**
- * 导入错误批注工作簿暂存器（Redis 双 Key + 本地有界降级，15 分钟 TTL 并强制校验租户与操作人归属）。
+ * 导入错误批注工作簿暂存器（基于 {@link RedisUtil} 的元数据/字节双键存储 + 本地有界降级，15 分钟 TTL 并坚持先验元数据归属权）。
  *
  * @author Ateng
  * @since 2026-11-25
@@ -40,14 +38,14 @@ import java.util.regex.Pattern;
 public class ImportFeedbackStore {
 
     /**
-     * 批注文件元数据 Redis 键前缀（完整键：{@code ateng:solid:excel:feedback:meta:{token}}）
+     * 批注文件元数据 Redis 相对键前缀（交由 {@link RedisUtil#buildKey(String)} 拼接前缀）
      */
-    public static final String META_KEY_PREFIX = "ateng:solid:excel:feedback:meta:";
+    public static final String META_KEY_PREFIX = "excel:feedback:meta:";
 
     /**
-     * 批注文件字节内容 Redis 键前缀（完整键：{@code ateng:solid:excel:feedback:bin:{token}}）
+     * 批注文件字节内容 Redis 相对键前缀（交由 {@link RedisUtil#buildKey(String)} 拼接前缀）
      */
-    public static final String BIN_KEY_PREFIX = "ateng:solid:excel:feedback:bin:";
+    public static final String BIN_KEY_PREFIX = "excel:feedback:bin:";
 
     /**
      * 批注文件允许暂存的最大体积（4MB 硬上限）
@@ -62,9 +60,9 @@ public class ImportFeedbackStore {
     private static final Duration DEFAULT_TTL = Duration.ofMinutes(15);
     private static final Pattern SAFE_TOKEN_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{16,64}$");
 
-    private final ObjectProvider<StringRedisTemplate> stringRedisTemplateProvider;
+    private final AdaptiveRedisSupport adaptiveRedisSupport;
+    private final ObjectProvider<RedisUtil> redisUtilProvider;
     private final SolidSystemProperties systemProperties;
-    private final ObjectProvider<Environment> environmentProvider;
 
     private final ConcurrentHashMap<String, LocalFeedbackEntry> localStore = new ConcurrentHashMap<>();
     private final LinkedHashSet<String> localOrder = new LinkedHashSet<>();
@@ -95,15 +93,13 @@ public class ImportFeedbackStore {
         Duration ttl = resolveTtl();
         FeedbackMeta meta = new FeedbackMeta(tenantId, operatorUserId, normalizedFilename);
 
-        StringRedisTemplate redis = RedisActivationResolver.resolveActive(
-                stringRedisTemplateProvider, environmentProvider
-        );
-        if (redis != null) {
+        RedisUtil redisUtil = adaptiveRedisSupport.resolveActive(redisUtilProvider);
+        if (redisUtil != null) {
             try {
                 // 先写 bin 再写 meta，避免并发读命中 meta 时 bin 尚未落盘
                 String encodedBin = Base64.getEncoder().encodeToString(content);
-                redis.opsForValue().set(BIN_KEY_PREFIX + token, encodedBin, ttl);
-                redis.opsForValue().set(META_KEY_PREFIX + token, JsonUtil.toJsonString(meta), ttl);
+                RedisUtil.set(RedisUtil.buildKey(BIN_KEY_PREFIX + token), encodedBin, ttl);
+                RedisUtil.set(RedisUtil.buildKey(META_KEY_PREFIX + token), meta, ttl);
                 return token;
             } catch (RuntimeException ex) {
                 log.warn("写入 Redis 批注暂存失败，自动降级为本地有界暂存: token={}", token, ex);
@@ -115,7 +111,7 @@ public class ImportFeedbackStore {
     }
 
     /**
-     * 按令牌加载批注工作簿并校验当前租户与操作人归属。
+     * 按令牌加载批注工作簿并先通过元数据校验当前租户与操作人归属，再按需读取二进制工作簿内容。
      *
      * @param token             32 位批注访问令牌
      * @param effectiveTenantId 当前生效工作租户主键
@@ -129,15 +125,27 @@ public class ImportFeedbackStore {
         }
         String normalizedToken = token.trim();
 
-        StoredFeedback stored = loadFromRedisOrLocal(normalizedToken);
-        if (stored == null || stored.meta() == null || stored.content() == null || stored.content().length == 0) {
+        RedisUtil redisUtil = adaptiveRedisSupport.resolveActive(redisUtilProvider);
+        if (redisUtil != null) {
+            FeedbackMeta redisMeta = readMetaFromRedis(normalizedToken);
+            if (redisMeta != null) {
+                // 先核验 meta 归属权，越权或跨租户请求直接 403，绝不触发 4MB bin 大对象读取
+                assertOwnership(redisMeta, effectiveTenantId, currentUserId);
+                byte[] content = readBinFromRedis(normalizedToken);
+                if (content == null || content.length == 0) {
+                    throw new BusinessException(CommonResultCode.NOT_FOUND, "批注文件已过期或不存在，请重新执行导入");
+                }
+                return new FeedbackFile(redisMeta.getFilename(), content);
+            }
+        }
+
+        // Redis 未启用、查空或瞬态异常降级写入本地后，回查本地有界暂存（同样先验 meta 再拷贝字节）
+        LocalFeedbackEntry local = loadLocalEntry(normalizedToken);
+        if (local == null || local.meta() == null || local.content() == null || local.content().length == 0) {
             throw new BusinessException(CommonResultCode.NOT_FOUND, "批注文件已过期或不存在，请重新执行导入");
         }
-        if (!Objects.equals(stored.meta().getTenantId(), effectiveTenantId)
-                || !Objects.equals(stored.meta().getOperatorUserId(), currentUserId)) {
-            throw new BusinessException(CommonResultCode.FORBIDDEN, "无权下载他人或其他租户的导入批注文件");
-        }
-        return new FeedbackFile(stored.meta().getFilename(), stored.content());
+        assertOwnership(local.meta(), effectiveTenantId, currentUserId);
+        return new FeedbackFile(local.meta().getFilename(), local.content().clone());
     }
 
     /**
@@ -155,25 +163,33 @@ public class ImportFeedbackStore {
         }
     }
 
-    private StoredFeedback loadFromRedisOrLocal(String token) {
-        StringRedisTemplate redis = RedisActivationResolver.resolveActive(
-                stringRedisTemplateProvider, environmentProvider
-        );
-        if (redis != null) {
-            try {
-                String metaJson = redis.opsForValue().get(META_KEY_PREFIX + token);
-                String encodedBin = redis.opsForValue().get(BIN_KEY_PREFIX + token);
-                if (StringUtils.hasText(metaJson) && StringUtils.hasText(encodedBin)) {
-                    FeedbackMeta meta = JsonUtil.parseObject(metaJson, FeedbackMeta.class);
-                    byte[] content = Base64.getDecoder().decode(encodedBin);
-                    return new StoredFeedback(meta, content);
-                }
-            } catch (RuntimeException ex) {
-                log.warn("读取 Redis 批注暂存异常，尝试本地降级暂存回查: token={}", token, ex);
-            }
+    private FeedbackMeta readMetaFromRedis(String token) {
+        try {
+            return RedisUtil.get(RedisUtil.buildKey(META_KEY_PREFIX + token), FeedbackMeta.class);
+        } catch (RuntimeException ex) {
+            log.warn("读取 Redis 批注元数据异常，尝试本地降级暂存回查: token={}", token, ex);
+            return null;
         }
-        // Redis 瞬态异常降级写入本地后若 Redis 恢复查空，仍须回查本地有界暂存避免误报 404
-        return loadLocal(token);
+    }
+
+    private byte[] readBinFromRedis(String token) {
+        try {
+            String encodedBin = RedisUtil.get(RedisUtil.buildKey(BIN_KEY_PREFIX + token), String.class);
+            if (!StringUtils.hasText(encodedBin)) {
+                return null;
+            }
+            return Base64.getDecoder().decode(encodedBin);
+        } catch (RuntimeException ex) {
+            log.warn("读取或解码 Redis 批注字节内容异常: token={}", token, ex);
+            return null;
+        }
+    }
+
+    private static void assertOwnership(FeedbackMeta meta, Long effectiveTenantId, Long currentUserId) {
+        if (!Objects.equals(meta.getTenantId(), effectiveTenantId)
+                || !Objects.equals(meta.getOperatorUserId(), currentUserId)) {
+            throw new BusinessException(CommonResultCode.FORBIDDEN, "无权下载他人或其他租户的导入批注文件");
+        }
     }
 
     private void saveLocal(String token, FeedbackMeta meta, byte[] content, Instant expiresAt) {
@@ -195,7 +211,7 @@ public class ImportFeedbackStore {
         }
     }
 
-    private StoredFeedback loadLocal(String token) {
+    private LocalFeedbackEntry loadLocalEntry(String token) {
         Instant now = Instant.now();
         localLock.lock();
         try {
@@ -208,7 +224,9 @@ public class ImportFeedbackStore {
                 localOrder.remove(token);
                 return null;
             }
-            return new StoredFeedback(entry.meta(), entry.content().clone());
+            localOrder.remove(token);
+            localOrder.add(token);
+            return entry;
         } finally {
             localLock.unlock();
         }
@@ -240,10 +258,7 @@ public class ImportFeedbackStore {
         Duration configured = systemProperties != null && systemProperties.getUser() != null
                 ? systemProperties.getUser().getImportFeedbackTtl()
                 : null;
-        if (configured == null || configured.isZero() || configured.isNegative()) {
-            return DEFAULT_TTL;
-        }
-        return configured;
+        return AdaptiveRedisSupport.resolveEffectiveTtl(configured, DEFAULT_TTL);
     }
 
     /**
@@ -253,9 +268,6 @@ public class ImportFeedbackStore {
      * @param content  工作簿字节数组
      */
     public record FeedbackFile(String filename, byte[] content) {
-    }
-
-    private record StoredFeedback(FeedbackMeta meta, byte[] content) {
     }
 
     private record LocalFeedbackEntry(FeedbackMeta meta, byte[] content, Instant expiresAt) {
