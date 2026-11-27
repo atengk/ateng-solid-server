@@ -15,28 +15,23 @@ import io.github.atengk.solid.system.mapper.SysRoleMapper;
 import io.github.atengk.solid.system.mapper.SysUserMapper;
 import io.github.atengk.solid.system.mapper.SysUserRoleMapper;
 import io.github.atengk.solid.system.properties.SolidSystemProperties;
-import io.github.atengk.solid.system.support.RedisActivationResolver;
+import io.github.atengk.solid.system.support.AdaptiveRedisSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.env.Environment;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.security.SecureRandom;
 import java.time.Duration;
-import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 平台首次启动超级管理员自动初始化引导器：支持外部强口令策略 Fail-Fast、留空生成 16 位无歧义强随机口令、Redis 分布式锁防并发重复建号及事务外 {@link DuplicateKeyException} 二次复核。
+ * 平台首次启动超级管理员自动初始化引导器：支持外部强口令策略 Fail-Fast、留空生成 16 位无歧义强随机口令、
+ * 经 {@link AdaptiveRedisSupport} 委派分布式锁防并发重复建号及事务外 {@link DuplicateKeyException} 二次复核。
  *
  * @author Ateng
  * @since 2026-11-25
@@ -47,11 +42,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SuperAdminBootstrapper implements ApplicationRunner {
 
     /**
-     * 平台超管初始化分布式锁 Redis 键
+     * 平台超管初始化分布式锁领域相对键（受 {@code ateng.boot.redis.key-prefix} 托管，默认物理键 {@code solid:lock:init:super-admin}）
      */
-    public static final String INIT_LOCK_KEY = "ateng:solid:init:super-admin:lock";
+    public static final String INIT_LOCK_KEY = "init:super-admin";
 
-    private static final Duration INIT_LOCK_TTL = Duration.ofSeconds(30);
+    private static final Duration INIT_LOCK_WAIT_TIME = Duration.ofSeconds(5);
     private static final int GENERATED_PASSWORD_LENGTH = 16;
     private static final String DEFAULT_NICKNAME = "超级管理员";
     /**
@@ -67,19 +62,13 @@ public class SuperAdminBootstrapper implements ApplicationRunner {
     private static final String ALL_PASSWORD_CHARS = UPPER_CHARS + LOWER_CHARS + DIGIT_CHARS + SPECIAL_CHARS;
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
-    private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT = new DefaultRedisScript<>(
-            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
-            Long.class
-    );
-
     private final SolidSystemProperties systemProperties;
     private final SysUserMapper sysUserMapper;
     private final SysRoleMapper sysRoleMapper;
     private final SysDeptMapper sysDeptMapper;
     private final SysUserRoleMapper sysUserRoleMapper;
     private final TransactionTemplate transactionTemplate;
-    private final ObjectProvider<StringRedisTemplate> stringRedisTemplateProvider;
-    private final ObjectProvider<Environment> environmentProvider;
+    private final AdaptiveRedisSupport adaptiveRedisSupport;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -105,23 +94,19 @@ public class SuperAdminBootstrapper implements ApplicationRunner {
             return;
         }
 
-        StringRedisTemplate redis = RedisActivationResolver.resolveActive(
-                stringRedisTemplateProvider, environmentProvider);
-        if (redis == null) {
-            doBootstrap(init, username, configuredPassword, hasExternalPassword);
-            return;
-        }
-
-        String lockToken = UUID.randomUUID().toString();
-        Boolean acquired = redis.opsForValue().setIfAbsent(INIT_LOCK_KEY, lockToken, INIT_LOCK_TTL);
-        if (!Boolean.TRUE.equals(acquired)) {
-            log.info("检测到其他集群实例正在初始化平台超级管理员，当前节点跳过等待");
-            return;
-        }
-        try {
-            doBootstrap(init, username, configuredPassword, hasExternalPassword);
-        } finally {
-            releaseLockSafely(redis, lockToken);
+        boolean executed = adaptiveRedisSupport.tryExecuteWithLock(
+                INIT_LOCK_KEY,
+                INIT_LOCK_WAIT_TIME,
+                () -> doBootstrap(init, username, configuredPassword, hasExternalPassword)
+        );
+        if (!executed) {
+            if (hasBoundSuperAdmin()) {
+                log.info("等待平台超级管理员初始化分布式锁超时（{}s），其他实例已完成建号，当前节点跳过",
+                        INIT_LOCK_WAIT_TIME.toSeconds());
+            } else {
+                log.warn("等待平台超级管理员初始化分布式锁超时（{}s）且尚未检测到超管绑定记录，当前节点跳过重复初始化",
+                        INIT_LOCK_WAIT_TIME.toSeconds());
+            }
         }
     }
 
@@ -261,14 +246,6 @@ public class SuperAdminBootstrapper implements ApplicationRunner {
                         .eq(SysUser::getTenantId, SolidConstants.PLATFORM_TENANT_ID)
                         .eq(SysUser::getUsername, username)
         );
-    }
-
-    private void releaseLockSafely(StringRedisTemplate redis, String lockToken) {
-        try {
-            redis.execute(RELEASE_LOCK_SCRIPT, List.of(INIT_LOCK_KEY), lockToken);
-        } catch (RuntimeException ex) {
-            log.warn("释放超级管理员初始化分布式锁失败，将等待 TTL 自动失效: key={}", INIT_LOCK_KEY, ex);
-        }
     }
 
     private static String generateStrongRandomPassword() {

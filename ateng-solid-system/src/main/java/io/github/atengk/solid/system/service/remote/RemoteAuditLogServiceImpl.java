@@ -1,6 +1,7 @@
 package io.github.atengk.solid.system.service.remote;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import io.github.atengk.boot.core.concurrent.ConcurrentLruCache;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.model.UserAgentInfo;
 import io.github.atengk.boot.core.util.UserAgentUtil;
@@ -12,21 +13,15 @@ import io.github.atengk.solid.system.entity.SysLoginLog;
 import io.github.atengk.solid.system.entity.SysUser;
 import io.github.atengk.solid.system.mapper.SysLoginLogMapper;
 import io.github.atengk.solid.system.mapper.SysUserMapper;
-import io.github.atengk.solid.system.support.RedisActivationResolver;
+import io.github.atengk.solid.system.support.AdaptiveRedisSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.core.env.Environment;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 审计日志跨模块远程落库服务实现：负责基于 {@code eventId} 的幂等登录日志写库、User-Agent 解析以及登录成功后的用户最近登录轨迹同步。
@@ -39,9 +34,12 @@ import java.util.concurrent.locks.ReentrantLock;
 @RequiredArgsConstructor
 public class RemoteAuditLogServiceImpl implements RemoteAuditLogService {
 
-    private static final String LOGIN_EVENT_IDEMPOTENT_PREFIX = "ateng:solid:audit:login:event:";
+    /**
+     * 登录审计事件领域相对幂等键前缀（受 {@code ateng.boot.redis.key-prefix} 托管，默认物理键 {@code solid:idempotent:audit:login:{eventId}}）
+     */
+    public static final String LOGIN_EVENT_IDEMPOTENT_PREFIX = "audit:login:";
+
     private static final Duration EVENT_IDEMPOTENT_TTL = Duration.ofHours(24);
-    private static final int LOCAL_DEDUP_MAX_CAPACITY = 10_000;
     private static final int MAX_SHORT_COL_LEN = 64;
     private static final int MAX_LOGIN_TYPE_LEN = 32;
     private static final int MAX_MSG_LEN = 500;
@@ -49,34 +47,50 @@ public class RemoteAuditLogServiceImpl implements RemoteAuditLogService {
     private final SysLoginLogMapper sysLoginLogMapper;
     private final SysUserMapper sysUserMapper;
     private final TransactionTemplate transactionTemplate;
-    private final ObjectProvider<StringRedisTemplate> stringRedisTemplateProvider;
-    private final ObjectProvider<Environment> environmentProvider;
+    private final AdaptiveRedisSupport adaptiveRedisSupport;
 
-    private final ReentrantLock localDedupLock = new ReentrantLock();
-    private final Map<String, Boolean> localProcessedEvents = new LinkedHashMap<>(256, 0.75f, false) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
-            return size() > LOCAL_DEDUP_MAX_CAPACITY;
+    private final ConcurrentLruCache<String, Boolean> localProcessedEvents = new ConcurrentLruCache<>(
+            AdaptiveRedisSupport.DEFAULT_LOCAL_MAX_CAPACITY,
+            EVENT_IDEMPOTENT_TTL
+    );
+
+    /**
+     * 构建登录审计事件的领域相对幂等键。
+     *
+     * @param eventId 领域事件唯一标识
+     * @return 规范化后的相对幂等键；输入为空白时返回 {@code null}
+     */
+    public static String buildEventIdempotentKey(String eventId) {
+        if (!StringUtils.hasText(eventId)) {
+            return null;
         }
-    };
+        return LOGIN_EVENT_IDEMPOTENT_PREFIX + eventId.trim();
+    }
 
     @Override
     public void recordLoginAudit(LoginAuditCommand cmd) {
         if (cmd == null) {
             return;
         }
-        String eventId = StringUtils.hasText(cmd.getEventId()) ? cmd.getEventId().trim() : null;
-        if (eventId != null && !tryAcquireEventProcessing(eventId)) {
-            log.debug("登录审计事件已幂等消费，跳过重复落库: eventId={}", eventId);
+        String eventKey = buildEventIdempotentKey(cmd.getEventId());
+        if (eventKey == null) {
+            persistLoginAudit(cmd);
             return;
         }
-
-        try {
-            persistLoginAudit(cmd);
-        } catch (RuntimeException ex) {
-            releaseEventProcessing(eventId);
-            throw ex;
+        boolean executed = adaptiveRedisSupport.executeIdempotent(
+                eventKey,
+                EVENT_IDEMPOTENT_TTL,
+                true,
+                () -> persistLoginAudit(cmd),
+                localProcessedEvents
+        );
+        if (!executed) {
+            log.debug("登录审计事件已幂等消费，跳过重复落库: eventId={}", cmd.getEventId().trim());
         }
+    }
+
+    int localDedupSize() {
+        return localProcessedEvents.size();
     }
 
     private void persistLoginAudit(LoginAuditCommand cmd) {
@@ -114,54 +128,6 @@ public class RemoteAuditLogServiceImpl implements RemoteAuditLogService {
                 );
             }
         }));
-    }
-
-    private boolean tryAcquireEventProcessing(String eventId) {
-        StringRedisTemplate redis = RedisActivationResolver.resolveActive(
-                stringRedisTemplateProvider,
-                environmentProvider
-        );
-        if (redis != null) {
-            try {
-                Boolean first = redis.opsForValue().setIfAbsent(
-                        LOGIN_EVENT_IDEMPOTENT_PREFIX + eventId,
-                        "1",
-                        EVENT_IDEMPOTENT_TTL
-                );
-                return Boolean.TRUE.equals(first);
-            } catch (RuntimeException ex) {
-                log.warn("Redis 登录审计幂等锁异常，降级使用本地有界去重表: eventId={}", eventId, ex);
-            }
-        }
-        localDedupLock.lock();
-        try {
-            return localProcessedEvents.putIfAbsent(eventId, Boolean.TRUE) == null;
-        } finally {
-            localDedupLock.unlock();
-        }
-    }
-
-    private void releaseEventProcessing(String eventId) {
-        if (eventId == null) {
-            return;
-        }
-        localDedupLock.lock();
-        try {
-            localProcessedEvents.remove(eventId);
-        } finally {
-            localDedupLock.unlock();
-        }
-        StringRedisTemplate redis = RedisActivationResolver.resolveActive(
-                stringRedisTemplateProvider,
-                environmentProvider
-        );
-        if (redis != null) {
-            try {
-                redis.delete(LOGIN_EVENT_IDEMPOTENT_PREFIX + eventId);
-            } catch (RuntimeException ex) {
-                log.warn("回滚删除 Redis 登录审计幂等键失败: eventId={}", eventId, ex);
-            }
-        }
     }
 
     private static String formatClientMetric(String name, String version) {

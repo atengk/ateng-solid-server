@@ -1,7 +1,12 @@
 package io.github.atengk.solid;
 
 import io.github.atengk.boot.core.util.PasswordUtil;
+import io.github.atengk.boot.redis.lock.template.DistributedLockTemplate;
+import io.github.atengk.boot.redis.lock.template.LockAction;
+import io.github.atengk.boot.redis.properties.RedisProperties;
 import io.github.atengk.solid.common.constant.SolidConstants;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import io.github.atengk.solid.common.validator.PasswordPolicyValidator;
 import io.github.atengk.solid.system.bootstrap.SuperAdminBootstrapper;
 import io.github.atengk.solid.system.entity.SysUser;
@@ -10,6 +15,7 @@ import io.github.atengk.solid.system.mapper.SysRoleMapper;
 import io.github.atengk.solid.system.mapper.SysUserMapper;
 import io.github.atengk.solid.system.mapper.SysUserRoleMapper;
 import io.github.atengk.solid.system.properties.SolidSystemProperties;
+import io.github.atengk.solid.system.support.AdaptiveRedisSupport;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -24,25 +30,25 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.core.env.Environment;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -88,8 +94,10 @@ class SuperAdminBootstrapperIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @SuppressWarnings("unchecked")
-    private static ObjectProvider<StringRedisTemplate> emptyRedisProvider() {
-        return mock(ObjectProvider.class);
+    private static <T> ObjectProvider<T> providerOf(T instance) {
+        ObjectProvider<T> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(instance);
+        return provider;
     }
 
     @SuppressWarnings("unchecked")
@@ -97,9 +105,26 @@ class SuperAdminBootstrapperIntegrationTest {
         return mock(ObjectProvider.class);
     }
 
+    private static AdaptiveRedisSupport offlineAdaptiveSupport() {
+        return adaptiveSupport(null, emptyEnvProvider());
+    }
+
+    private static AdaptiveRedisSupport adaptiveSupport(
+            DistributedLockTemplate lockTemplate,
+            ObjectProvider<Environment> environmentProvider
+    ) {
+        return new AdaptiveRedisSupport(
+                environmentProvider,
+                providerOf(null),
+                providerOf(null),
+                providerOf(lockTemplate),
+                providerOf(null)
+        );
+    }
+
     private SuperAdminBootstrapper newBootstrapper(
             SolidSystemProperties properties,
-            ObjectProvider<StringRedisTemplate> redisProvider
+            AdaptiveRedisSupport adaptiveRedisSupport
     ) {
         return new SuperAdminBootstrapper(
                 properties,
@@ -108,8 +133,7 @@ class SuperAdminBootstrapperIntegrationTest {
                 sysDeptMapper,
                 sysUserRoleMapper,
                 transactionTemplate,
-                redisProvider,
-                emptyEnvProvider()
+                adaptiveRedisSupport
         );
     }
 
@@ -120,13 +144,6 @@ class SuperAdminBootstrapperIntegrationTest {
         props.getInit().setSuperAdminNickname("超级管理员");
         props.getInit().setSuperAdminPassword(password);
         return props;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static ObjectProvider<StringRedisTemplate> redisProviderOf(StringRedisTemplate template) {
-        ObjectProvider<StringRedisTemplate> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(template);
-        return provider;
     }
 
     private void resetUsers() {
@@ -184,7 +201,7 @@ class SuperAdminBootstrapperIntegrationTest {
         String weakSecret = "Weak12";
         SuperAdminBootstrapper weakRunner = newBootstrapper(
                 initProps(true, "superadmin", weakSecret),
-                emptyRedisProvider()
+                offlineAdaptiveSupport()
         );
 
         assertThatThrownBy(() -> weakRunner.run(new DefaultApplicationArguments()))
@@ -201,7 +218,7 @@ class SuperAdminBootstrapperIntegrationTest {
         resetUsers();
         SuperAdminBootstrapper autoPwdRunner = newBootstrapper(
                 initProps(true, "superadmin", ""),
-                emptyRedisProvider()
+                offlineAdaptiveSupport()
         );
 
         autoPwdRunner.run(new DefaultApplicationArguments());
@@ -255,7 +272,7 @@ class SuperAdminBootstrapperIntegrationTest {
 
         SuperAdminBootstrapper collisionRunner = newBootstrapper(
                 initProps(true, "superadmin", "Ateng@Test2026"),
-                emptyRedisProvider()
+                offlineAdaptiveSupport()
         );
 
         assertThatThrownBy(() -> collisionRunner.run(new DefaultApplicationArguments()))
@@ -265,44 +282,91 @@ class SuperAdminBootstrapperIntegrationTest {
 
     @Test
     @Order(6)
-    @DisplayName("Redis 锁被其他实例占用时应当跳过建号；抢锁成功后应当按 30s TTL 加锁并在结束后释放")
+    @DisplayName("应当经 AdaptiveRedisSupport 委派 DistributedLockTemplate（init:super-admin / 5s）并在超时/降级/关闭态守卫建号")
     @SuppressWarnings("unchecked")
-    void shouldRespectOptionalRedisDistributedLock() throws Exception {
+    void shouldRespectOptionalRedisDistributedLock() throws InterruptedException {
+        assertThat(SuperAdminBootstrapper.INIT_LOCK_KEY).isEqualTo("init:super-admin");
+        assertThat(SuperAdminBootstrapper.INIT_LOCK_KEY).doesNotContain("ateng:solid:");
+
+        // 1. 争锁 5s 超时未获得锁 -> 跳过建号
         resetUsers();
-        StringRedisTemplate busyRedis = mock(StringRedisTemplate.class);
-        ValueOperations<String, String> busyOps = mock(ValueOperations.class);
-        when(busyRedis.opsForValue()).thenReturn(busyOps);
-        when(busyOps.setIfAbsent(
+        DistributedLockTemplate contendedLock = mock(DistributedLockTemplate.class);
+        when(contendedLock.tryExecute(
                 eq(SuperAdminBootstrapper.INIT_LOCK_KEY),
-                anyString(),
-                eq(Duration.ofSeconds(30)))
-        ).thenReturn(Boolean.FALSE);
+                eq(Duration.ofSeconds(5)),
+                any(LockAction.class)
+        )).thenReturn(false);
 
         SuperAdminBootstrapper contendedRunner = newBootstrapper(
                 initProps(true, "superadmin", "Ateng@Test2026"),
-                redisProviderOf(busyRedis)
+                adaptiveSupport(contendedLock, emptyEnvProvider())
         );
         contendedRunner.run(new DefaultApplicationArguments());
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(1) FROM sys_user", Integer.class)).isZero();
 
-        StringRedisTemplate freeRedis = mock(StringRedisTemplate.class);
-        ValueOperations<String, String> freeOps = mock(ValueOperations.class);
-        when(freeRedis.opsForValue()).thenReturn(freeOps);
-        when(freeOps.setIfAbsent(
-                eq(SuperAdminBootstrapper.INIT_LOCK_KEY),
-                anyString(),
-                eq(Duration.ofSeconds(30)))
-        ).thenReturn(Boolean.TRUE);
+        // 2. 结合真实 DistributedLockTemplate + Mock RLock 校验物理锁键、5s 等待、看门狗与释放；以及冲突异常透传不重放
+        resetUsers();
+        RedissonClient redissonClient = mock(RedissonClient.class);
+        RLock rLock = mock(RLock.class);
+        when(redissonClient.getLock("solid:lock:init:super-admin")).thenReturn(rLock);
+        when(rLock.tryLock(5000L, TimeUnit.MILLISECONDS)).thenReturn(true);
+        when(rLock.isHeldByCurrentThread()).thenReturn(true);
+
+        RedisProperties redisProps = new RedisProperties();
+        redisProps.setKeyPrefix("solid:");
+        DistributedLockTemplate realTemplate = new DistributedLockTemplate(redissonClient, redisProps);
 
         SuperAdminBootstrapper acquiredRunner = newBootstrapper(
                 initProps(true, "superadmin", "Ateng@Test2026"),
-                redisProviderOf(freeRedis)
+                adaptiveSupport(realTemplate, emptyEnvProvider())
         );
         acquiredRunner.run(new DefaultApplicationArguments());
-
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(1) FROM sys_user", Integer.class)).isEqualTo(1);
-        verify(freeOps).setIfAbsent(eq(SuperAdminBootstrapper.INIT_LOCK_KEY), anyString(), eq(Duration.ofSeconds(30)));
-        verify(freeRedis).execute(any(), eq(List.of(SuperAdminBootstrapper.INIT_LOCK_KEY)), any());
+        verify(redissonClient).getLock("solid:lock:init:super-admin");
+        verify(rLock).tryLock(5000L, TimeUnit.MILLISECONDS);
+        verify(rLock).unlock();
+
+        // 持锁内业务逻辑抛出 IllegalStateException 时应当直接透传且正常解锁，不得触发降级重放
+        resetUsers();
+        SysUser conflictUser = new SysUser();
+        conflictUser.setTenantId(SolidConstants.PLATFORM_TENANT_ID);
+        conflictUser.setDeptId(SolidConstants.DEFAULT_ROOT_DEPT_ID);
+        conflictUser.setUsername("superadmin");
+        conflictUser.setNickname("锁内占号冲突");
+        conflictUser.setPassword(PasswordUtil.hash("Ateng@Conflict1"));
+        conflictUser.setGender("2");
+        conflictUser.setStatus(0);
+        sysUserMapper.insert(conflictUser);
+
+        assertThatThrownBy(() -> acquiredRunner.run(new DefaultApplicationArguments()))
+                .isInstanceOf(IllegalStateException.class);
+        verify(rLock, times(2)).unlock();
+
+        // 3. 锁模板故障异常 -> 降级直通落库，依赖 DB 二次复核与 DuplicateKeyException 兜底
+        resetUsers();
+        DistributedLockTemplate failingLock = mock(DistributedLockTemplate.class);
+        when(failingLock.tryExecute(
+                eq(SuperAdminBootstrapper.INIT_LOCK_KEY),
+                eq(Duration.ofSeconds(5)),
+                any(LockAction.class)
+        )).thenThrow(new IllegalStateException("redisson unavailable"));
+
+        newBootstrapper(
+                initProps(true, "superadmin", "Ateng@Test2026"),
+                adaptiveSupport(failingLock, emptyEnvProvider())
+        ).run(new DefaultApplicationArguments());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(1) FROM sys_user", Integer.class)).isEqualTo(1);
+
+        // 4. ateng.boot.redis.enabled=false -> 跳过 DistributedLockTemplate 直接落库
+        resetUsers();
+        DistributedLockTemplate bypassedLock = mock(DistributedLockTemplate.class);
+        MockEnvironment disabledEnv = new MockEnvironment().withProperty("ateng.boot.redis.enabled", "false");
+        newBootstrapper(
+                initProps(true, "superadmin", "Ateng@Test2026"),
+                adaptiveSupport(bypassedLock, providerOf(disabledEnv))
+        ).run(new DefaultApplicationArguments());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(1) FROM sys_user", Integer.class)).isEqualTo(1);
+        verifyNoInteractions(bypassedLock);
     }
 
     @Test
@@ -338,8 +402,7 @@ class SuperAdminBootstrapperIntegrationTest {
                 sysDeptMapper,
                 sysUserRoleMapper,
                 throwingWithConcurrentWinnerTx,
-                emptyRedisProvider(),
-                emptyEnvProvider()
+                offlineAdaptiveSupport()
         );
         concurrentRunner.run(new DefaultApplicationArguments());
 
@@ -356,8 +419,7 @@ class SuperAdminBootstrapperIntegrationTest {
                 sysDeptMapper,
                 sysUserRoleMapper,
                 throwingWithoutSuperAdminTx,
-                emptyRedisProvider(),
-                emptyEnvProvider()
+                offlineAdaptiveSupport()
         );
         assertThatThrownBy(() -> orphanConflictRunner.run(new DefaultApplicationArguments()))
                 .isInstanceOf(IllegalStateException.class);

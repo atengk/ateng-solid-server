@@ -1,9 +1,12 @@
 package io.github.atengk.solid.system.support;
 
 import io.github.atengk.boot.core.concurrent.ConcurrentLruCache;
+import io.github.atengk.boot.core.exception.IdempotentException;
 import io.github.atengk.boot.redis.cache.spi.TwoLevelCache;
 import io.github.atengk.boot.redis.cache.template.RedisCacheTemplate;
 import io.github.atengk.boot.redis.cache.twolevel.TwoLevelCacheManager;
+import io.github.atengk.boot.redis.idempotent.RedisIdempotentTemplate;
+import io.github.atengk.boot.redis.lock.template.DistributedLockTemplate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -18,12 +21,14 @@ import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
  * 系统管理域可选 Redis 自适应协同门面，按 {@code ateng.boot.redis.enabled} 与容器装配状态自动切换
- * {@link TwoLevelCacheManager} / {@link RedisCacheTemplate} 受管能力与本地有界内存降级路径。
+ * {@link TwoLevelCacheManager}、{@link RedisCacheTemplate}、{@link DistributedLockTemplate}、
+ * {@link RedisIdempotentTemplate} 受管能力与进程内有界降级路径。
  *
  * @author Ateng
  * @since 2026-11-27
@@ -38,9 +43,13 @@ public class AdaptiveRedisSupport {
      */
     public static final int DEFAULT_LOCAL_MAX_CAPACITY = 10_000;
 
+    private static final Duration DEFAULT_LOCK_WAIT_TIME = Duration.ofSeconds(5);
+
     private final ObjectProvider<Environment> environmentProvider;
     private final ObjectProvider<TwoLevelCacheManager> twoLevelCacheManagerProvider;
     private final ObjectProvider<RedisCacheTemplate> redisCacheTemplateProvider;
+    private final ObjectProvider<DistributedLockTemplate> distributedLockTemplateProvider;
+    private final ObjectProvider<RedisIdempotentTemplate> redisIdempotentTemplateProvider;
 
     /**
      * 判断当前运行环境是否处于 Redis 启用状态（未显式关闭 {@code ateng.boot.redis.enabled}）。
@@ -169,7 +178,7 @@ public class AdaptiveRedisSupport {
         Objects.requireNonNull(loader, "loader 不能为空");
         Objects.requireNonNull(localFallbackLoader, "localFallbackLoader 不能为空");
 
-        RedisCacheTemplate template = resolveRedisCacheTemplate();
+        RedisCacheTemplate template = resolveActiveTemplate(redisCacheTemplateProvider);
         if (template == null) {
             return localFallbackLoader.get();
         }
@@ -218,28 +227,154 @@ public class AdaptiveRedisSupport {
         if (localEvictAction != null) {
             localEvictAction.run();
         }
-        RedisCacheTemplate template = resolveRedisCacheTemplate();
+        RedisCacheTemplate template = resolveActiveTemplate(redisCacheTemplateProvider);
         if (template != null) {
             evictL2Safely(template, key);
         }
     }
 
-    private TwoLevelCache resolveTwoLevelCache(String cacheSpace) {
-        if (!isRedisActive() || !StringUtils.hasText(cacheSpace) || twoLevelCacheManagerProvider == null) {
-            return null;
+    /**
+     * 通过 {@link DistributedLockTemplate} 争用分布式锁并受管执行任务（自动看门狗续期）；
+     * Redis 未启用或锁模板故障时平滑降级直通执行（依靠数据库约束兜底）。
+     *
+     * @param lockKey  受 {@code ateng.boot.redis.key-prefix} 托管的相对分布式锁键
+     * @param waitTime 最长等待获取锁时长（空或负值时回落 {@code 5s}）
+     * @param action   持锁执行的业务逻辑
+     * @return 成功获取锁并执行返回 {@code true}；等待超时未抢到锁返回 {@code false}
+     */
+    public boolean tryExecuteWithLock(String lockKey, Duration waitTime, Runnable action) {
+        Objects.requireNonNull(action, "action 不能为空");
+        DistributedLockTemplate lockTemplate = resolveActiveTemplate(distributedLockTemplateProvider);
+        if (lockTemplate == null || !StringUtils.hasText(lockKey)) {
+            action.run();
+            return true;
         }
-        TwoLevelCacheManager manager = twoLevelCacheManagerProvider.getIfAvailable();
-        if (manager == null) {
-            return null;
+
+        Duration effectiveWait = waitTime != null && !waitTime.isNegative() ? waitTime : DEFAULT_LOCK_WAIT_TIME;
+        AtomicBoolean actionInvoked = new AtomicBoolean(false);
+        AtomicReference<RuntimeException> actionFailure = new AtomicReference<>();
+        try {
+            return lockTemplate.tryExecute(lockKey, effectiveWait, () -> runTracked(action, actionInvoked, actionFailure));
+        } catch (RuntimeException lockEx) {
+            rethrowIfActionAlreadyEntered(actionInvoked, actionFailure, lockEx);
+            if (Thread.currentThread().isInterrupted()) {
+                throw lockEx;
+            }
+            log.warn("DistributedLockTemplate 加锁失败，降级直通执行: lockKey={}", lockKey, lockEx);
+            action.run();
+            return true;
         }
-        return manager.getTwoLevelCache(cacheSpace);
     }
 
-    private RedisCacheTemplate resolveRedisCacheTemplate() {
-        if (!isRedisActive() || redisCacheTemplateProvider == null) {
+    /**
+     * 通过 {@link RedisIdempotentTemplate} 执行幂等去重保护的动作；
+     * 重复投递静默跳过并返回 {@code false}；Redis 未启用或抢占异常时降级至本地有界去重表执行。
+     *
+     * @param key                受 {@code ateng.boot.redis.key-prefix} 托管的相对幂等键
+     * @param ttl                幂等凭据保留时长
+     * @param deleteOnFailure    业务执行失败时是否删除幂等凭据允许上游重试
+     * @param action             待保护的业务动作
+     * @param localDedupFallback 本地有界 LRU 去重降级缓存
+     * @return 首次消费并成功执行返回 {@code true}；命中重复幂等跳过返回 {@code false}
+     */
+    public boolean executeIdempotent(
+            String key,
+            Duration ttl,
+            boolean deleteOnFailure,
+            Runnable action,
+            ConcurrentLruCache<String, Boolean> localDedupFallback
+    ) {
+        Objects.requireNonNull(action, "action 不能为空");
+        Objects.requireNonNull(localDedupFallback, "localDedupFallback 不能为空");
+        if (!StringUtils.hasText(key)) {
+            action.run();
+            return true;
+        }
+
+        RedisIdempotentTemplate template = resolveActiveTemplate(redisIdempotentTemplateProvider);
+        if (template == null) {
+            return executeIdempotentLocally(key, action, localDedupFallback);
+        }
+
+        AtomicBoolean actionInvoked = new AtomicBoolean(false);
+        AtomicReference<RuntimeException> actionFailure = new AtomicReference<>();
+        try {
+            template.execute(key, ttl, deleteOnFailure, () -> runTracked(action, actionInvoked, actionFailure));
+            return true;
+        } catch (IdempotentException duplicateEx) {
+            if (actionFailure.get() != null) {
+                throw actionFailure.get();
+            }
+            log.debug("幂等键已存在或正在处理中，静默跳过重复执行: key={}", key);
+            return false;
+        } catch (RuntimeException redisEx) {
+            rethrowIfActionAlreadyEntered(actionInvoked, actionFailure, redisEx);
+            log.warn("RedisIdempotentTemplate 抢占异常，降级使用本地有界去重表执行: key={}", key, redisEx);
+            return executeIdempotentLocally(key, action, localDedupFallback);
+        }
+    }
+
+    private static void runTracked(
+            Runnable action,
+            AtomicBoolean actionInvoked,
+            AtomicReference<RuntimeException> actionFailure
+    ) {
+        actionInvoked.set(true);
+        try {
+            action.run();
+        } catch (RuntimeException ex) {
+            actionFailure.set(ex);
+            throw ex;
+        }
+    }
+
+    private static void rethrowIfActionAlreadyEntered(
+            AtomicBoolean actionInvoked,
+            AtomicReference<RuntimeException> actionFailure,
+            RuntimeException outerEx
+    ) {
+        if (actionFailure.get() != null) {
+            throw actionFailure.get();
+        }
+        if (actionInvoked.get()) {
+            throw outerEx;
+        }
+    }
+
+    private static boolean executeIdempotentLocally(
+            String key,
+            Runnable action,
+            ConcurrentLruCache<String, Boolean> localDedupFallback
+    ) {
+        AtomicBoolean firstAttempt = new AtomicBoolean(false);
+        localDedupFallback.computeIfAbsent(key, k -> {
+            firstAttempt.set(true);
+            return Boolean.TRUE;
+        });
+        if (!firstAttempt.get()) {
+            return false;
+        }
+        try {
+            action.run();
+            return true;
+        } catch (RuntimeException ex) {
+            localDedupFallback.remove(key);
+            throw ex;
+        }
+    }
+
+    private TwoLevelCache resolveTwoLevelCache(String cacheSpace) {
+        TwoLevelCacheManager manager = StringUtils.hasText(cacheSpace)
+                ? resolveActiveTemplate(twoLevelCacheManagerProvider)
+                : null;
+        return manager != null ? manager.getTwoLevelCache(cacheSpace) : null;
+    }
+
+    private <T> T resolveActiveTemplate(ObjectProvider<T> provider) {
+        if (!isRedisActive() || provider == null) {
             return null;
         }
-        return redisCacheTemplateProvider.getIfAvailable();
+        return provider.getIfAvailable();
     }
 
     private void evictL2Safely(RedisCacheTemplate template, String key) {
