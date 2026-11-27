@@ -581,11 +581,27 @@ class SysUserExcelImportIntegrationTest {
                     .andExpect(jsonPath("$.data.failCount").value(2))
                     .andReturn();
 
-            JsonNode errorsNode = objectMapper.readTree(res.getResponse().getContentAsString())
+            JsonNode errorsNode = objectMapper.readTree(res.getResponse().getContentAsString(StandardCharsets.UTF_8))
                     .path("data").path("errors");
             assertThat(errorsNode).hasSize(2);
             assertThat(errorsNode.get(0).path("rowNum").asInt()).isEqualTo(3);
             assertThat(errorsNode.get(1).path("rowNum").asInt()).isEqualTo(4);
+
+            // RBAC 防提权：受限导入人尝试通过 Excel 赋予超出自身权限/数据范围的角色 imp_admin（ALL + 1106）必须在阶段 1 被拦截
+            byte[] roleEscBytes = buildStandardWorkbook(List.of(
+                    List.of("role_esc_u", "角色越权导入", "华东区/研发组", "", "imp_admin", "", "", "", "")
+            ));
+            MvcResult roleEscRes = mockMvc.perform(multipart("/admin/system/user/import")
+                            .file(xlsxMultipart("role_escalation.xlsx", roleEscBytes))
+                            .header("satoken-admin", scopedToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andExpect(jsonPath("$.data.successCount").value(0))
+                    .andExpect(jsonPath("$.data.failCount").value(1))
+                    .andReturn();
+            assertThat(objectMapper.readTree(roleEscRes.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                    .path("data").path("errors").get(0).path("errorMessage").asText())
+                    .contains("超出当前操作人边界");
 
             // 阶段 3 TOCTOU 复核：引入已停用部门 DEPT_DISABLED 必须抛出 100001 且整批不落库
             String hash = PasswordUtil.hash("Ateng@Stage3Check");

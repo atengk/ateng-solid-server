@@ -17,6 +17,8 @@ import io.github.atengk.solid.system.request.UserUpdateRequest;
 import io.github.atengk.solid.system.security.SolidDataPermissionHandler;
 import io.github.atengk.solid.system.security.SolidDataPermissionHandler.ScopeResolution;
 import io.github.atengk.solid.system.support.ContactFieldCrypto;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard.ActorPrivilegeContext;
 import io.github.atengk.solid.system.support.RoleViewSupport;
 import io.github.atengk.solid.system.support.SystemContextSupport;
 import io.github.atengk.solid.system.support.TenantQuotaGuard;
@@ -49,6 +51,7 @@ public class SysUserService {
     private final TenantQuotaGuard tenantQuotaGuard;
     private final UserRelationSupport relationSupport;
     private final SolidDataPermissionHandler dataPermissionHandler;
+    private final RbacPrivilegeGuard rbacPrivilegeGuard;
     private final TransactionTemplate transactionTemplate;
 
     /**
@@ -75,11 +78,13 @@ public class SysUserService {
         );
 
         return transactionTemplate.execute(txStatus -> {
+            ActorPrivilegeContext actorPrivilege = rbacPrivilegeGuard.resolveActorContext(tenantId, actorUserId);
             assertTargetDeptInActorScope(tenantId, actorUserId, request.getDeptId(), null, null);
             relationSupport.assertActiveDeptInTenant(tenantId, request.getDeptId());
             List<Long> postIds = relationSupport.validateAndNormalizePostIds(tenantId, request.getPostIds());
             boolean allowSuperAdmin = RoleViewSupport.isPlatformSuperAdminView(tenantId);
             List<Long> roleIds = relationSupport.validateAndNormalizeRoleIds(tenantId, request.getRoleIds(), allowSuperAdmin);
+            rbacPrivilegeGuard.assertActorCanAssignRoles(tenantId, actorPrivilege, roleIds);
             assertUniqueUserFields(tenantId, null, username, profile.phone(), profile.email());
             tenantQuotaGuard.assertQuotaAvailable(tenantId, 1);
 
@@ -149,6 +154,13 @@ public class SysUserService {
             } else if (CommonStatusEnum.DISABLED.getCode().equals(existing.getStatus())) {
                 tenantQuotaGuard.assertQuotaAvailable(tenantId, 0);
             }
+            if (!Objects.equals(actorUserId, id)) {
+                ActorPrivilegeContext actorPrivilege = rbacPrivilegeGuard.resolveActorContext(tenantId, actorUserId);
+                if (!actorPrivilege.unrestricted() && relationSupport.isBuiltinSuperAdminUser(tenantId, id)) {
+                    throw new BusinessException(SystemResultCode.SYSTEM_BUILTIN_PROTECTED, "非平台超级管理员禁止变更内置超级管理员状态");
+                }
+                rbacPrivilegeGuard.assertActorDominatesUsers(tenantId, actorPrivilege, List.of(id));
+            }
 
             LambdaUpdateWrapper<SysUser> wrapper = Wrappers.<SysUser>lambdaUpdate()
                     .eq(SysUser::getTenantId, tenantId)
@@ -178,6 +190,10 @@ public class SysUserService {
         loadEditableUserOrThrow(tenantId, id, actorUserId);
         if (relationSupport.isBuiltinSuperAdminUser(tenantId, id) && !Objects.equals(actorUserId, id)) {
             throw new BusinessException(SystemResultCode.SYSTEM_BUILTIN_PROTECTED, "不允许非本人重置平台内置超级管理员密码");
+        }
+        if (!Objects.equals(actorUserId, id)) {
+            ActorPrivilegeContext actorPrivilege = rbacPrivilegeGuard.resolveActorContext(tenantId, actorUserId);
+            rbacPrivilegeGuard.assertActorDominatesUsers(tenantId, actorPrivilege, List.of(id));
         }
 
         String candidatePassword = request != null ? request.getPassword() : null;
@@ -218,6 +234,8 @@ public class SysUserService {
             if (!relationSupport.findBuiltinSuperAdminUserIds(tenantId, idList).isEmpty()) {
                 throw new BusinessException(SystemResultCode.SYSTEM_BUILTIN_PROTECTED, "平台内置超级管理员账号不允许删除");
             }
+            ActorPrivilegeContext actorPrivilege = rbacPrivilegeGuard.resolveActorContext(tenantId, actorUserId);
+            rbacPrivilegeGuard.assertActorDominatesUsers(tenantId, actorPrivilege, idList);
             TenantContextHolder.runWithTenant(tenantId, () -> sysUserMapper.deleteByIds(idList));
             relationSupport.clearUserAssociationsOnDelete(tenantId, idList);
             relationSupport.evictAndLogoutAfterCommit(tenantId, idList, true, true);
@@ -240,6 +258,10 @@ public class SysUserService {
         List<Long> existingRoleIds = relationSupport.listAssignedRoleIds(tenantId, existing.getId());
 
         guardUserUpdateProtections(targetBuiltinSuperAdmin, editingSelf, allowSuperAdmin, targetStatus);
+        ActorPrivilegeContext actorPrivilege = rbacPrivilegeGuard.resolveActorContext(tenantId, actorUserId);
+        if (!editingSelf) {
+            rbacPrivilegeGuard.assertActorDominatesUsers(tenantId, actorPrivilege, List.of(existing.getId()));
+        }
         assertTargetDeptInActorScope(tenantId, actorUserId, request.getDeptId(), existing.getId(), existing.getDeptId());
         relationSupport.assertActiveDeptInTenant(tenantId, request.getDeptId());
         List<Long> postIds = request.getPostIds() != null
@@ -250,6 +272,9 @@ public class SysUserService {
                 : null;
         if (roleIds != null) {
             guardRoleAssignmentMutation(tenantId, targetBuiltinSuperAdmin, editingSelf, existingRoleIds, roleIds);
+            if (!editingSelf) {
+                rbacPrivilegeGuard.assertActorCanAssignRoles(tenantId, actorPrivilege, roleIds);
+            }
         }
         if (CommonStatusEnum.DISABLED.getCode().equals(existing.getStatus())
                 && CommonStatusEnum.NORMAL.getCode().equals(targetStatus)) {

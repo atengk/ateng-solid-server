@@ -140,7 +140,7 @@ public final class DeptTreeSupport {
     }
 
     /**
-     * 裁剪并校验部门名称长度边界（2~50 字符）。
+     * 裁剪并校验部门名称长度边界（2~50 字符，且禁止包含 Excel 全路径分隔符 {@code /}）。
      *
      * @param rawName 原始部门名称
      * @return 规范化后的部门名称
@@ -150,7 +150,25 @@ public final class DeptTreeSupport {
         if (trimmed == null || trimmed.length() < 2 || trimmed.length() > 50) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "部门名称长度须在 2~50 个字符之间");
         }
+        if (trimmed.contains("/")) {
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "部门名称不能包含路径分隔符 /");
+        }
         return trimmed;
+    }
+
+    /**
+     * 清洗租户名称作为初始化根部门名称（替换路径分隔符 {@code /}，避免阻断导入全路径分割）。
+     *
+     * @param tenantName 租户名称
+     * @return 安全根部门名称
+     */
+    public static String normalizeRootDeptName(String tenantName) {
+        String trimmed = SystemContextSupport.trimToNull(tenantName);
+        if (trimmed == null) {
+            return "默认根部门";
+        }
+        String sanitized = trimmed.replace('/', '-');
+        return sanitized.length() > 50 ? sanitized.substring(0, 50) : sanitized;
     }
 
     /**

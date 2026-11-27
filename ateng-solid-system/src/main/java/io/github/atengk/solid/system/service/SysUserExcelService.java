@@ -21,6 +21,8 @@ import io.github.atengk.solid.system.service.UserImportValidator.ValidatedImport
 import io.github.atengk.solid.system.service.UserImportValidator.ValidationOutcome;
 import io.github.atengk.solid.system.support.ImportFeedbackStore;
 import io.github.atengk.solid.system.support.ImportFeedbackStore.FeedbackFile;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard.ActorPrivilegeContext;
 import io.github.atengk.solid.system.support.RoleViewSupport;
 import io.github.atengk.solid.system.support.SystemContextSupport;
 import io.github.atengk.solid.system.support.UserContactAndDictSupport;
@@ -75,6 +77,7 @@ public class SysUserExcelService {
     private final UserContactAndDictSupport userContactAndDictSupport;
     private final UserImportSemaphoreCoordinator userImportSemaphoreCoordinator;
     private final SolidDataPermissionHandler dataPermissionHandler;
+    private final RbacPrivilegeGuard rbacPrivilegeGuard;
 
     /**
      * 执行三段式 500 行用户 Excel 整批原子导入。
@@ -92,10 +95,11 @@ public class SysUserExcelService {
         ExcelReadResult<UserImportDTO> readResult = parseExcelSafely(fileBytes, importMaxRows);
         boolean allowSuperAdminAssign = RoleViewSupport.isPlatformSuperAdminView(tenantId);
         ScopeResolution actorScope = dataPermissionHandler.resolveActorScope(tenantId, operatorUserId);
+        ActorPrivilegeContext actorPrivilege = rbacPrivilegeGuard.resolveActorContext(tenantId, operatorUserId);
 
         // 1. 阶段 1（无事务）：全量校验并统计总数据行数，任一出错立即渲染标红批注后返回，绝不触发耗时 PBKDF2 计算
         ValidationOutcome outcome = userImportValidator.validate(
-                tenantId, allowSuperAdminAssign, actorScope, readResult, importMaxRows
+                tenantId, allowSuperAdminAssign, actorScope, actorPrivilege, readResult, importMaxRows
         );
         if (!outcome.errors().isEmpty()) {
             return buildErrorFeedbackResult(

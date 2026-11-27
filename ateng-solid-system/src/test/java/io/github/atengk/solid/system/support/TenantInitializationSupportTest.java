@@ -154,6 +154,7 @@ class TenantInitializationSupportTest {
         assertThat(deptCaptor.getValue().getTenantId()).isEqualTo(9001L);
         assertThat(deptCaptor.getValue().getParentId()).isZero();
         assertThat(deptCaptor.getValue().getAncestors()).isEqualTo("0");
+        assertThat(DeptTreeSupport.normalizeRootDeptName("华东/研发企业")).isEqualTo("华东-研发企业");
 
         ArgumentCaptor<SysRole> roleCaptor = ArgumentCaptor.forClass(SysRole.class);
         verify(roleMapper).insert(roleCaptor.capture());

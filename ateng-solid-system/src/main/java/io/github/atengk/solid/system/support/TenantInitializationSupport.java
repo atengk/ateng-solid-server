@@ -107,7 +107,7 @@ public class TenantInitializationSupport {
         rootDept.setTenantId(tenantId);
         rootDept.setParentId(0L);
         rootDept.setAncestors("0");
-        rootDept.setDeptName(tenantName);
+        rootDept.setDeptName(DeptTreeSupport.normalizeRootDeptName(tenantName));
         rootDept.setSort(1);
         rootDept.setStatus(CommonStatusEnum.NORMAL.getCode());
         sysDeptMapper.insert(rootDept);

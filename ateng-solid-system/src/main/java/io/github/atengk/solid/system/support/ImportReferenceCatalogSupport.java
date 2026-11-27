@@ -101,11 +101,12 @@ public class ImportReferenceCatalogSupport {
     }
 
     /**
-     * 解析单行逗号分隔的角色编码列表为有效启用态角色主键列表（阻断 {@code super_admin} 分配）。
+     * 解析单行逗号分隔的角色编码列表为有效启用态角色主键列表（阻断 {@code super_admin} 与超出操作人权限边界的角色分配）。
      *
      * @param rowIndex              1-based 物理行号
      * @param rawRoleCodes          原始角色编码文本
      * @param allowSuperAdminAssign 是否允许分配超级管理员角色
+     * @param exceededRoleIds       权限或数据范围超出当前操作人的角色主键集合
      * @param activeRolesByCode     启用角色编码映射
      * @param errors                错误明细收集容器
      * @return 解析后的角色主键列表
@@ -114,6 +115,7 @@ public class ImportReferenceCatalogSupport {
             int rowIndex,
             String rawRoleCodes,
             boolean allowSuperAdminAssign,
+            Set<Long> exceededRoleIds,
             Map<String, SysRole> activeRolesByCode,
             List<ExcelErrorRow> errors
     ) {
@@ -137,6 +139,11 @@ public class ImportReferenceCatalogSupport {
             if (!allowSuperAdminAssign && UserRelationSupport.isSuperAdminRole(role)) {
                 errors.add(ExcelErrorRow.of(UserImportDTO.class, rowIndex, UserImportDTO::getRoleCodes,
                         rawRoleCodes, "当前视角不允许分配平台超级管理员角色"));
+                continue;
+            }
+            if (exceededRoleIds != null && exceededRoleIds.contains(role.getId())) {
+                errors.add(ExcelErrorRow.of(UserImportDTO.class, rowIndex, UserImportDTO::getRoleCodes,
+                        rawRoleCodes, "角色【" + code + "】权限或数据范围超出当前操作人边界，禁止越权授予"));
                 continue;
             }
             roleIds.add(role.getId());

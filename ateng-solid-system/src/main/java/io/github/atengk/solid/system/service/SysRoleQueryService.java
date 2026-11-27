@@ -18,6 +18,8 @@ import io.github.atengk.solid.system.mapper.SysRoleDeptMapper;
 import io.github.atengk.solid.system.mapper.SysRoleMapper;
 import io.github.atengk.solid.system.mapper.SysRoleMenuMapper;
 import io.github.atengk.solid.system.request.RoleQueryRequest;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard.ActorPrivilegeContext;
 import io.github.atengk.solid.system.support.RoleViewSupport;
 import io.github.atengk.solid.system.support.SystemContextSupport;
 import io.github.atengk.solid.system.vo.MenuTreeVO;
@@ -48,6 +50,7 @@ public class SysRoleQueryService {
     private final SysRoleMenuMapper sysRoleMenuMapper;
     private final SysRoleDeptMapper sysRoleDeptMapper;
     private final RoleAuthorizationSupport authorizationSupport;
+    private final RbacPrivilegeGuard rbacPrivilegeGuard;
 
     /**
      * 分页查询当前工作租户下的角色列表（客户端未显式传排序字段时默认按 {@code sort ASC, id ASC}）。
@@ -123,13 +126,16 @@ public class SysRoleQueryService {
     }
 
     /**
-     * 获取当前工作租户在角色表单中允许勾选的菜单树（普通租户受套餐边界与 {@code platform_only} 限制）。
+     * 获取当前工作租户在角色表单中允许勾选的菜单树（普通租户受套餐边界与 {@code platform_only} 限制，非超管再按自身权限交集裁剪）。
      *
      * @return 可授权菜单树
      */
     public List<MenuTreeVO> listGrantableMenuTree() {
         Long tenantId = contextSupport.requireEffectiveTenantId();
-        return authorizationSupport.buildGrantableMenuTree(tenantId, contextSupport.isMultiTenantEnabled());
+        ActorPrivilegeContext actor = rbacPrivilegeGuard.resolveActorContext(
+                tenantId, contextSupport.resolveCurrentActorUserId()
+        );
+        return authorizationSupport.buildGrantableMenuTree(tenantId, contextSupport.isMultiTenantEnabled(), actor);
     }
 
     /**

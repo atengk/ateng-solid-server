@@ -18,6 +18,8 @@ import io.github.atengk.solid.system.mapper.SysRoleMenuMapper;
 import io.github.atengk.solid.system.mapper.SysUserRoleMapper;
 import io.github.atengk.solid.system.request.RoleDataScopeRequest;
 import io.github.atengk.solid.system.request.RoleSaveRequest;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard.ActorPrivilegeContext;
 import io.github.atengk.solid.system.support.RoleViewSupport;
 import io.github.atengk.solid.system.support.RoleViewSupport.NormalizedRolePayload;
 import io.github.atengk.solid.system.support.SystemContextSupport;
@@ -51,9 +53,11 @@ public class SysRoleService {
     private final SysRoleMenuMapper sysRoleMenuMapper;
     private final SysRoleDeptMapper sysRoleDeptMapper;
     private final RoleAuthorizationSupport authorizationSupport;
+    private final RbacPrivilegeGuard rbacPrivilegeGuard;
 
     /**
-     * 新增角色及菜单权限，禁填保留编码 {@code super_admin}/{@code admin}（{@code 102004}）与套餐越界菜单（{@code 102006}）。
+     * 新增角色及菜单权限，禁填保留编码 {@code super_admin}/{@code admin}（{@code 102004}）与套餐越界菜单（{@code 102006}），
+     * 并强制约束授权菜单与初始数据权限范围不得高于操作人自身边界。
      *
      * @param request 角色保存请求
      * @return 新建角色主键
@@ -61,10 +65,15 @@ public class SysRoleService {
     @Transactional(rollbackFor = Exception.class)
     public Long createRole(RoleSaveRequest request) {
         Long tenantId = contextSupport.requireEffectiveTenantId();
+        ActorPrivilegeContext actor = rbacPrivilegeGuard.resolveActorContext(
+                tenantId, contextSupport.resolveCurrentActorUserId()
+        );
         NormalizedRolePayload payload = RoleViewSupport.validateAndNormalizePayload(null, request);
         List<Long> menuIds = authorizationSupport.validateAndNormalizeMenuIds(
                 tenantId, contextSupport.isMultiTenantEnabled(), request.getMenuIds()
         );
+        rbacPrivilegeGuard.assertMenusWithinActorPrivilege(tenantId, actor, menuIds);
+        DataScopeType defaultScope = actor.resolveDefaultCreateDataScope();
 
         Long roleId = TenantContextHolder.runWithTenant(tenantId, () -> {
             ensureRoleUniqueInTenant(tenantId, null, payload.roleName(), payload.roleKey());
@@ -73,7 +82,7 @@ public class SysRoleService {
             role.setTenantId(tenantId);
             role.setRoleName(payload.roleName());
             role.setRoleKey(payload.roleKey());
-            role.setDataScope(DataScopeType.ALL.getCode());
+            role.setDataScope(defaultScope.getCode());
             role.setMenuCheckStrictly(payload.menuCheckStrictly());
             role.setDeptCheckStrictly(Boolean.FALSE);
             role.setSort(payload.sort());
@@ -106,11 +115,16 @@ public class SysRoleService {
         }
         SysRole existing = requireRoleInTenant(tenantId, request.getId());
         RoleViewSupport.assertNotBuiltinSuperAdmin(tenantId, existing, "系统内置超级管理员角色禁止编辑修改");
+        ActorPrivilegeContext actor = rbacPrivilegeGuard.resolveActorContext(
+                tenantId, contextSupport.resolveCurrentActorUserId()
+        );
+        rbacPrivilegeGuard.assertActorDominatesRoles(tenantId, actor, List.of(existing));
 
         NormalizedRolePayload payload = RoleViewSupport.validateAndNormalizePayload(existing, request);
         List<Long> menuIds = authorizationSupport.validateAndNormalizeMenuIds(
                 tenantId, contextSupport.isMultiTenantEnabled(), request.getMenuIds()
         );
+        rbacPrivilegeGuard.assertMenusWithinActorPrivilege(tenantId, actor, menuIds);
 
         List<Long> affectedUserIds = TenantContextHolder.runWithTenant(tenantId, () -> {
             ensureRoleUniqueInTenant(tenantId, existing.getId(), payload.roleName(), payload.roleKey());
@@ -131,7 +145,8 @@ public class SysRoleService {
             }
 
             replaceRoleMenus(tenantId, existing.getId(), menuIds);
-            if (!Objects.equals(existing.getRoleKey(), payload.roleKey())) {
+            if (!Objects.equals(existing.getRoleKey(), payload.roleKey())
+                    || !Objects.equals(existing.getStatus(), payload.status())) {
                 return loadBoundUserIds(tenantId, existing.getId());
             }
             return Collections.<Long>emptyList();
@@ -142,7 +157,7 @@ public class SysRoleService {
     }
 
     /**
-     * 切换角色启停状态；保护内置 {@code super_admin}（{@code 102007}），提交后 3 参刷新角色权限缓存。
+     * 切换角色启停状态；保护内置 {@code super_admin}（{@code 102007}）并校检越权操作，提交后双清角色及已绑定用户缓存。
      *
      * @param id     角色主键
      * @param status 目标状态（0=正常，1=停用）
@@ -153,19 +168,31 @@ public class SysRoleService {
         Integer validStatus = SystemContextSupport.requireValidStatus(status);
         SysRole existing = requireRoleInTenant(tenantId, id);
         RoleViewSupport.assertNotBuiltinSuperAdmin(tenantId, existing, "系统内置超级管理员角色禁止停用或修改状态");
+        ActorPrivilegeContext actor = rbacPrivilegeGuard.resolveActorContext(
+                tenantId, contextSupport.resolveCurrentActorUserId()
+        );
+        rbacPrivilegeGuard.assertActorDominatesRoles(tenantId, actor, List.of(existing));
 
-        TenantContextHolder.runWithTenant(tenantId, () -> sysRoleMapper.update(
-                new SysRole(),
-                Wrappers.<SysRole>lambdaUpdate()
-                        .eq(SysRole::getTenantId, tenantId)
-                        .eq(SysRole::getId, existing.getId())
-                        .set(SysRole::getStatus, validStatus)
-        ));
-        authorizationSupport.evictRoleAndUserCacheAfterCommit(tenantId, List.of(existing.getRoleKey()), List.of());
+        List<Long> affectedUserIds = TenantContextHolder.runWithTenant(tenantId, () -> {
+            sysRoleMapper.update(
+                    new SysRole(),
+                    Wrappers.<SysRole>lambdaUpdate()
+                            .eq(SysRole::getTenantId, tenantId)
+                            .eq(SysRole::getId, existing.getId())
+                            .set(SysRole::getStatus, validStatus)
+            );
+            if (!Objects.equals(existing.getStatus(), validStatus)) {
+                return loadBoundUserIds(tenantId, existing.getId());
+            }
+            return Collections.<Long>emptyList();
+        });
+        authorizationSupport.evictRoleAndUserCacheAfterCommit(
+                tenantId, List.of(existing.getRoleKey()), affectedUserIds
+        );
     }
 
     /**
-     * 分配角色 5 级数据权限范围；自定部门（{@code CUSTOM}）强制要求至少 1 个有效部门（{@code 100001}）。
+     * 分配角色 5 级数据权限范围；自定部门（{@code CUSTOM}）强制要求至少 1 个有效启用部门（{@code 100001}），且不得高于操作人自身数据权限。
      *
      * @param id      角色主键
      * @param request 数据权限配置请求
@@ -178,6 +205,10 @@ public class SysRoleService {
         }
         SysRole existing = requireRoleInTenant(tenantId, id);
         RoleViewSupport.assertNotBuiltinSuperAdmin(tenantId, existing, "系统内置超级管理员角色禁止变更数据权限范围");
+        ActorPrivilegeContext actor = rbacPrivilegeGuard.resolveActorContext(
+                tenantId, contextSupport.resolveCurrentActorUserId()
+        );
+        rbacPrivilegeGuard.assertActorDominatesRoles(tenantId, actor, List.of(existing));
 
         DataScopeType targetScope = DataScopeType.fromCode(request.getDataScope());
         if (targetScope == null) {
@@ -186,6 +217,7 @@ public class SysRoleService {
         List<Long> customDeptIds = targetScope == DataScopeType.CUSTOM
                 ? authorizationSupport.validateAndNormalizeCustomDeptIds(tenantId, request.getDeptIds())
                 : Collections.emptyList();
+        rbacPrivilegeGuard.assertDataScopeWithinActor(actor, targetScope, customDeptIds);
         boolean deptCheckStrictly = Boolean.TRUE.equals(request.getDeptCheckStrictly());
 
         TenantContextHolder.runWithTenant(tenantId, () -> {
@@ -225,6 +257,9 @@ public class SysRoleService {
     public void deleteRoles(String ids) {
         Long tenantId = contextSupport.requireEffectiveTenantId();
         List<Long> roleIds = SystemContextSupport.parsePathIds(ids);
+        ActorPrivilegeContext actor = rbacPrivilegeGuard.resolveActorContext(
+                tenantId, contextSupport.resolveCurrentActorUserId()
+        );
 
         List<String> deletedKeys = TenantContextHolder.runWithTenant(tenantId, () -> {
             List<SysRole> targets = sysRoleMapper.selectList(
@@ -240,6 +275,7 @@ public class SysRoleService {
                 RoleViewSupport.assertNotBuiltinSuperAdmin(tenantId, role, "系统内置超级管理员角色禁止删除");
                 keys.add(role.getRoleKey());
             }
+            rbacPrivilegeGuard.assertActorDominatesRoles(tenantId, actor, targets);
 
             List<Long> referencedIds = sysUserRoleMapper.selectReferencedRoleIds(tenantId, roleIds);
             if (!CollectionUtils.isEmpty(referencedIds)) {

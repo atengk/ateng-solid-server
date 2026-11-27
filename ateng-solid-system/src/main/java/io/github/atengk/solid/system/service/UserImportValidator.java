@@ -12,6 +12,8 @@ import io.github.atengk.solid.system.security.SolidDataPermissionHandler.ScopeRe
 import io.github.atengk.solid.system.support.ImportDeptPathResolver;
 import io.github.atengk.solid.system.support.ImportReferenceCatalogSupport;
 import io.github.atengk.solid.system.support.ImportReferenceCatalogSupport.ReferenceCatalog;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard.ActorPrivilegeContext;
 import io.github.atengk.solid.system.support.SystemContextSupport;
 import io.github.atengk.solid.system.support.TenantQuotaGuard;
 import io.github.atengk.solid.system.support.UserContactAndDictSupport;
@@ -46,6 +48,7 @@ public class UserImportValidator {
 
     private final TenantQuotaGuard tenantQuotaGuard;
     private final ImportReferenceCatalogSupport catalogSupport;
+    private final RbacPrivilegeGuard rbacPrivilegeGuard;
 
     /**
      * 对 Excel 解析结果执行阶段 1 全量只读业务校验（无写事务、无密码哈希计算）。
@@ -53,6 +56,7 @@ public class UserImportValidator {
      * @param tenantId              当前工作租户主键
      * @param allowSuperAdminAssign 是否处于平台超管视角
      * @param actorScope            当前操作人数据权限范围快照（为空时按空可见集合 Fail-Closed 处理）
+     * @param actorPrivilege        当前操作人 RBAC 权限能力快照（为空时免除额外子集受限检查或依服务调用方传入）
      * @param readResult            Fesod 读取与 JSR-303 校验结果
      * @param importMaxRows         允许导入的最大物理数据行数
      * @return 校验汇总结论（含总行数、可入库规范化行列表及错误明细列表）
@@ -61,10 +65,14 @@ public class UserImportValidator {
             Long tenantId,
             boolean allowSuperAdminAssign,
             ScopeResolution actorScope,
+            ActorPrivilegeContext actorPrivilege,
             ExcelReadResult<UserImportDTO> readResult,
             int importMaxRows
     ) {
         ScopeResolution effectiveScope = actorScope != null ? actorScope : ScopeResolution.EMPTY;
+        ActorPrivilegeContext effectivePrivilege = actorPrivilege != null
+                ? actorPrivilege
+                : ActorPrivilegeContext.UNRESTRICTED;
         List<ExcelRowData<UserImportDTO>> rowRecords = readResult != null && readResult.getRowRecords() != null
                 ? readResult.getRowRecords()
                 : Collections.emptyList();
@@ -86,8 +94,11 @@ public class UserImportValidator {
             return new ValidationOutcome(totalCount, Collections.emptyList(), errors);
         }
 
-        // 2. 一次性批量装载部门树索引、岗位/角色编码字典、动态性别字典及库内既有唯一键集合（零 N+1）
+        // 2. 一次性批量装载部门树索引、岗位/角色编码字典、越权角色黑名单、动态性别字典及库内既有唯一键集合（零 N+1）
         ReferenceCatalog catalog = catalogSupport.loadCatalog(tenantId, rowRecords);
+        Set<Long> exceededRoleIds = rbacPrivilegeGuard.findPrivilegeExceededRoleIds(
+                tenantId, effectivePrivilege, catalog.activeRolesByCode().values()
+        );
 
         // 3. 逐行执行规范化、批内查重、库内唯一冲突校验与关联语义解析
         List<ValidatedImportRow> validRows = new ArrayList<>(rowRecords.size());
@@ -99,8 +110,8 @@ public class UserImportValidator {
                 continue;
             }
             ValidatedImportRow validated = validateSingleRow(
-                    record.rowIndex(), record.data(), allowSuperAdminAssign, effectiveScope, catalog,
-                    seenUsernames, seenPhones, seenEmails, errors
+                    record.rowIndex(), record.data(), allowSuperAdminAssign, effectiveScope,
+                    exceededRoleIds, catalog, seenUsernames, seenPhones, seenEmails, errors
             );
             if (validated != null) {
                 validRows.add(validated);
@@ -138,6 +149,7 @@ public class UserImportValidator {
             UserImportDTO dto,
             boolean allowSuperAdminAssign,
             ScopeResolution actorScope,
+            Set<Long> exceededRoleIds,
             ReferenceCatalog catalog,
             Map<String, Integer> seenUsernames,
             Map<String, Integer> seenPhones,
@@ -168,7 +180,7 @@ public class UserImportValidator {
                 rowIndex, dto.getPostCodes(), catalog.activePostsByCode(), errors
         );
         List<Long> roleIds = ImportReferenceCatalogSupport.resolveRoleIds(
-                rowIndex, dto.getRoleCodes(), allowSuperAdminAssign, catalog.activeRolesByCode(), errors
+                rowIndex, dto.getRoleCodes(), allowSuperAdminAssign, exceededRoleIds, catalog.activeRolesByCode(), errors
         );
         String gender = resolveGenderCode(rowIndex, dto.getGenderLabel(), catalog.genderDict(), errors);
         Integer status = resolveStatusCode(rowIndex, dto.getStatusLabel(), errors);

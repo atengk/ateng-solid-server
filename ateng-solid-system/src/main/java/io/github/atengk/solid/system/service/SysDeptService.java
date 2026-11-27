@@ -180,6 +180,14 @@ public class SysDeptService {
             throw new BusinessException(SystemResultCode.RESOURCE_IN_USE, "该部门下仍有关联用户，请先调整部门后再删除");
         }
 
+        long soleCustomRoleCount = DataPermissionContextHolder.runWithoutPermission(() ->
+                TenantContextHolder.runWithTenant(tenantId, () -> sysRoleDeptMapper.countSoleBoundCustomRoles(tenantId, id))
+        );
+        if (soleCustomRoleCount > 0L) {
+            throw new BusinessException(SystemResultCode.RESOURCE_IN_USE,
+                    "存在仅绑定该部门的自定数据权限角色，请先调整角色数据范围后再删除");
+        }
+
         TenantContextHolder.runWithTenant(tenantId, () -> {
             sysRoleDeptMapper.delete(
                     Wrappers.<SysRoleDept>lambdaQuery()

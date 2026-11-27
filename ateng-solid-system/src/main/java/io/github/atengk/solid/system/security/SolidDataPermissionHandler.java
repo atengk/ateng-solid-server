@@ -93,17 +93,21 @@ public class SolidDataPermissionHandler implements DataPermissionHandler {
     }
 
     /**
-     * 解析指定操作人在目标租户下的 5 级数据权限生效范围快照（供写路径与批量导入等前置业务校验复用）。
+     * 解析指定操作人在目标租户下的 5 级数据权限生效范围快照（供写路径、权限子集校验与批量导入复用）。
+     * <p>
+     * 仅平台超级管理员返回 {@link ScopeResolution#ALLOW_ALL}；不受外层 {@link DataPermissionContextHolder#runWithoutPermission}
+     * 查询屏蔽上下文误触发为全量权限。
+     * </p>
      *
      * @param tenantId 目标租户主键
      * @param userId   操作人用户主键
-     * @return 只读数据权限范围快照（平台超级管理员或忽略数据权限上下文时返回 {@link ScopeResolution#ALLOW_ALL}）
+     * @return 只读数据权限范围快照
      */
     public ScopeResolution resolveActorScope(Long tenantId, Long userId) {
         if (tenantId == null || userId == null) {
             return ScopeResolution.EMPTY;
         }
-        if (DataPermissionContextHolder.isIgnore() || DataPermissionContextHolder.isSuperAdmin()) {
+        if (DataPermissionContextHolder.isSuperAdmin()) {
             return ScopeResolution.ALLOW_ALL;
         }
         return DataPermissionContextHolder.runWithoutPermission(

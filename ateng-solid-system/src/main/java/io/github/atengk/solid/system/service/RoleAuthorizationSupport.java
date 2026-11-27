@@ -21,6 +21,7 @@ import io.github.atengk.solid.system.mapper.SysTenantMapper;
 import io.github.atengk.solid.system.mapper.SysTenantPackageMapper;
 import io.github.atengk.solid.system.mapper.SysTenantPackageMenuMapper;
 import io.github.atengk.solid.system.support.MenuTreeSupport;
+import io.github.atengk.solid.system.support.RbacPrivilegeGuard.ActorPrivilegeContext;
 import io.github.atengk.solid.system.vo.MenuTreeVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -61,9 +62,31 @@ public class RoleAuthorizationSupport {
      * @return 可授权菜单树集合
      */
     public List<MenuTreeVO> buildGrantableMenuTree(Long tenantId, boolean multiTenantEnabled) {
+        return buildGrantableMenuTree(tenantId, multiTenantEnabled, ActorPrivilegeContext.UNRESTRICTED);
+    }
+
+    /**
+     * 获取指定工作租户下符合操作人自身权限子集约束的角色表单可授权启用菜单树。
+     *
+     * @param tenantId           工作租户主键
+     * @param multiTenantEnabled 是否开启多租户模式
+     * @param actorPrivilege     操作人权限能力快照
+     * @return 可授权菜单树集合
+     */
+    public List<MenuTreeVO> buildGrantableMenuTree(
+            Long tenantId,
+            boolean multiTenantEnabled,
+            ActorPrivilegeContext actorPrivilege
+    ) {
         boolean platformView = SolidConstants.PLATFORM_TENANT_ID.equals(tenantId);
         Set<Long> packageMenuIds = platformView ? Collections.emptySet() : loadActivePackageMenuIds(tenantId);
         if (!platformView && packageMenuIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        ActorPrivilegeContext effectiveActor = actorPrivilege != null
+                ? actorPrivilege
+                : ActorPrivilegeContext.UNRESTRICTED;
+        if (!effectiveActor.unrestricted() && effectiveActor.effectiveNonDirMenuIds().isEmpty()) {
             return Collections.emptyList();
         }
 
@@ -73,7 +96,7 @@ public class RoleAuthorizationSupport {
         }
 
         Map<Long, List<SysMenu>> childrenMap = MenuTreeSupport.groupByParentId(activeMenus);
-        return buildGrantableSubtree(0L, childrenMap, packageMenuIds, platformView, multiTenantEnabled);
+        return buildGrantableSubtree(0L, childrenMap, packageMenuIds, platformView, multiTenantEnabled, effectiveActor);
     }
 
     /**
@@ -146,10 +169,11 @@ public class RoleAuthorizationSupport {
                 Wrappers.<SysDept>lambdaQuery()
                         .select(SysDept::getId)
                         .eq(SysDept::getTenantId, tenantId)
+                        .eq(SysDept::getStatus, CommonStatusEnum.NORMAL.getCode())
                         .in(SysDept::getId, distinctIds)
         ));
         if (CollectionUtils.isEmpty(depts) || depts.size() != distinctIds.size()) {
-            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "存在无效或跨租户的部门主键");
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "存在无效、已停用或跨租户的部门主键");
         }
         return distinctIds;
     }
@@ -252,7 +276,8 @@ public class RoleAuthorizationSupport {
             Map<Long, List<SysMenu>> childrenMap,
             Set<Long> packageMenuIds,
             boolean platformView,
-            boolean multiTenantEnabled
+            boolean multiTenantEnabled,
+            ActorPrivilegeContext actorPrivilege
     ) {
         List<SysMenu> candidates = childrenMap.get(parentId);
         if (CollectionUtils.isEmpty(candidates)) {
@@ -270,8 +295,13 @@ public class RoleAuthorizationSupport {
             if (!platformView && nodeType != MenuTypeEnum.DIRECTORY && !packageMenuIds.contains(menu.getId())) {
                 continue;
             }
+            if (!actorPrivilege.unrestricted()
+                    && nodeType != MenuTypeEnum.DIRECTORY
+                    && !actorPrivilege.effectiveNonDirMenuIds().contains(menu.getId())) {
+                continue;
+            }
             List<MenuTreeVO> children = buildGrantableSubtree(
-                    menu.getId(), childrenMap, packageMenuIds, platformView, multiTenantEnabled
+                    menu.getId(), childrenMap, packageMenuIds, platformView, multiTenantEnabled, actorPrivilege
             );
             if (nodeType == MenuTypeEnum.DIRECTORY) {
                 if (!children.isEmpty()) {

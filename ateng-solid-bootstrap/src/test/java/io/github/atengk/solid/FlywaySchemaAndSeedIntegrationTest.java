@@ -57,12 +57,12 @@ class FlywaySchemaAndSeedIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    @DisplayName("应当成功执行 V1.0.0 与 V1.0.1 迁移并创建全库 17 张表")
+    @DisplayName("应当成功执行 V1.0.0 ~ V1.0.2 迁移并创建全库 17 张表及角色名称唯一索引")
     void shouldMigrateAllSeventeenTables() {
         MigrationInfo[] applied = flyway.info().applied();
         assertThat(applied)
                 .extracting(info -> info.getVersion().getVersion())
-                .containsExactly("1.0.0", "1.0.1");
+                .containsExactly("1.0.0", "1.0.1", "1.0.2");
         assertThat(flyway.info().pending()).isEmpty();
 
         for (String table : ALL_TABLES) {
@@ -72,6 +72,13 @@ class FlywaySchemaAndSeedIntegrationTest {
                     .isNotNull()
                     .isGreaterThanOrEqualTo(0);
         }
+
+        Integer roleNameIdxCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.INDEXES "
+                        + "WHERE UPPER(TABLE_NAME) = 'SYS_ROLE' AND UPPER(INDEX_NAME) = 'UK_ROLE_TENANT_NAME_DELETED'",
+                Integer.class
+        );
+        assertThat(roleNameIdxCount).isGreaterThanOrEqualTo(1);
     }
 
     @Test
