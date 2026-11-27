@@ -63,16 +63,22 @@
 
 ---
 
-## 3. ArchUnit 自动化架构红线 (`ArchitectureGuardTest` · 9 条硬守卫)
+## 3. ArchUnit 自动化架构红线 (`ArchitectureGuardTest` · 15 条硬守卫)
 
-所有规则在 `ateng-solid-bootstrap` 的离线单元测试套件中强制执行（CI 必过）：
+所有规则及正负单点自检样本在 `ateng-solid-bootstrap` 的离线单元测试套件中强制执行（CI 必过）：
 
 1. **模块物理边界守卫（`auth` 隔离）**：`..solid.auth..` 包中的任何类 **严禁** 访问 `..solid.system..`（仅允许访问 `..solid.system.api..` 与 `..solid.common..`）。
 2. **契约层纯净守卫（`system-api` 零框架污染）**：`..solid.system.api..` 包中的任何类 **严禁** 访问 Spring Web (`org.springframework.web..`)、MyBatis-Plus (`com.baomidou..`)、OpenFeign (`org.springframework.cloud.openfeign..`)、Dubbo (`org.apache.dubbo..`) 或 Servlet API (`jakarta.servlet..`)。
 3. **现代 Java 21 依赖注入守卫**：全仓库业务类 **严禁** 在字段上使用 `@Autowired` 或 `@Resource`（强制构造器注入 / `@RequiredArgsConstructor`）。
 4. **Controller 零 Entity 泄漏守卫**：标注 `@RestController` / `@Controller` 的所有公开方法参数与返回值（含泛型参数）**严禁**出现 `..entity..` 包中的持久化实体类。
-5. **启动模块纯净守卫**：`ateng-solid-bootstrap` 根装配包不承载业务 `*Mapper` 或业务 `@RestController`/`@Controller`。
+5. **启动模块纯净守卫**：`ateng-solid-bootstrap` 根装配包及子包不承载业务 `*Mapper` 或业务 `@RestController`/`@Controller`。
 6. **Service 零 Servlet 耦合守卫**：`..solid..service..` 包中的任何类 **严禁** 依赖 `jakarta.servlet..`（保障双装配与虚拟线程/异步可测性）。
 7. **Mapper 零逆向依赖守卫**：`..solid..mapper..` 包中的任何类 **严禁** 依赖 `..controller..` 或 `..service..`。
 8. **`system-api` 裸 DTO/VO 守卫**：`..solid.system.api..` 中所有公开方法参数与返回值（含泛型参数）**严禁** 出现 `io.github.atengk.boot.core.model.Result`（测试期硬守卫 `ADR-0001` 跨态异常语义一致性）。
 9. **强类型配置收口守卫**：全仓库业务类 **严禁** 使用 `@Value`（`org.springframework.beans.factory.annotation.Value`）或 `@RefreshScope`（强制走 `@ConfigurationProperties`）。
+10. **系统实现零逆向依赖守卫（`system` 隔离）**：`io.github.atengk.solid.system..` 包中的任何类 **严禁** 反向依赖 `io.github.atengk.solid.auth..`。
+11. **公共底层零上浮依赖守卫（`common` 隔离）**：`io.github.atengk.solid.common..` 包中的任何类 **严禁** 反向依赖 `system`、`auth` 或 `bootstrap` 上层模块。
+12. **Controller 禁止越级穿透持久层守卫**：全部 `@RestController` / `@Controller` **严禁** 注入或直接依赖持久层 `*Mapper`。
+13. **Controller 全量声明式鉴权守卫**：全部 `@RestController` / `@Controller` 的 HTTP 映射方法（`@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`/`@RequestMapping`）必须在类或方法上显式标注 `@SaCheck*`（`cn.dev33.satoken.annotation`）或 `@Anonymous`。
+14. **`system-api` 跨态可序列化守卫**：`ateng-solid-system-api` 中全部 DTO 与 Command 具体类（排除 Lombok `*Builder`）必须实现 `java.io.Serializable` 以便未来平滑升级至 Dubbo RPC 微服务态。
+15. **非 Web 边界零 Servlet 耦合扩展守卫**：`..service..`、`..support..`、`..grant..` 与非 `HandlerInterceptor` 的 `..security..` 类 **严禁** 依赖 `jakarta.servlet..`（精准豁免如 `TenantAvailabilityInterceptor` 的合法 Spring MVC `HandlerInterceptor`）。

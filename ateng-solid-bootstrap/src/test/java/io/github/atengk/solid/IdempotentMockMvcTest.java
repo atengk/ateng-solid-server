@@ -10,6 +10,7 @@ import io.github.atengk.boot.mybatisplus.context.DataPermissionContextHolder;
 import io.github.atengk.boot.satoken.defense.LoginFailureLockService;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
+import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.api.enums.DataScopeType;
 import io.github.atengk.solid.system.api.result.SystemResultCode;
 import io.github.atengk.solid.system.entity.SysDept;
@@ -41,6 +42,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -225,6 +227,62 @@ class IdempotentMockMvcTest {
                         .header("satoken-admin", tokenA))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200));
+    }
+
+    @Test
+    @DisplayName("导入前置校验异常应当释放幂等锁，同文件名不同内容不应误拦截，且新增岗位受 @Idempotent 防重保护")
+    void shouldReleaseImportLockOnValidationExceptionDifferentiateSameFilenameContentAndProtectPostCreate() throws Exception {
+        String tokenA = login("idemp_a", "Ateng@Idemp1");
+        byte[] csvPayload = "username,nickname\ncsv_u1,CSV用户\n".getBytes(StandardCharsets.UTF_8);
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(multipart("/admin/system/user/import")
+                            .file(new MockMultipartFile("file", "bad_format.csv", "text/csv", csvPayload))
+                            .header("satoken-admin", tokenA))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(CommonBizResultCode.EXCEL_VALIDATION_FAILED.getCode()));
+        }
+
+        byte[] contentV1 = buildValidImportWorkbookBytes("same_file_u1", "同文件名用户一");
+        byte[] contentV2 = buildValidImportWorkbookBytes("same_file_u2", "同文件名用户二");
+
+        mockMvc.perform(multipart("/admin/system/user/import")
+                        .file(new MockMultipartFile(
+                                "file", "same_name.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", contentV1))
+                        .header("satoken-admin", tokenA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        mockMvc.perform(multipart("/admin/system/user/import")
+                        .file(new MockMultipartFile(
+                                "file", "same_name.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", contentV2))
+                        .header("satoken-admin", tokenA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        String superToken = Spec4TestFixtures.loginAsSuperAdmin(mockMvc, objectMapper);
+        String postBody = objectMapper.writeValueAsString(Map.of(
+                "postCode", "idemp_post_68",
+                "postName", "幂等验证岗位",
+                "sort", 99,
+                "status", CommonStatusEnum.NORMAL.getCode()
+        ));
+
+        mockMvc.perform(post("/admin/system/post")
+                        .header("satoken-admin", superToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(postBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        mockMvc.perform(post("/admin/system/post")
+                        .header("satoken-admin", superToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(postBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(CommonResultCode.REPEAT_SUBMIT.getCode()));
     }
 
     private void createUser(Long id, String username, String password) {
