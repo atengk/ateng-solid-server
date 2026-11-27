@@ -1,5 +1,6 @@
 package io.github.atengk.solid.system.request;
 
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 import lombok.ToString;
 
@@ -16,5 +17,6 @@ public class UserResetPasswordRequest {
     /**
      * 重置后的新明文口令（需满足强口令复杂度策略）
      */
+    @Size(max = 128, message = "登录密码长度不能超过 128 个字符")
     private String password;
 }

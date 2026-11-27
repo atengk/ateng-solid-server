@@ -6,7 +6,9 @@ import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.OptionItem;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.dict.EnumDictionaryRegistry;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,6 +28,7 @@ import java.util.Map;
  * @since 2026-11-25
  */
 @SaCheckLogin
+@Validated
 @RestController
 @RequestMapping("/admin/system/enums")
 @RequiredArgsConstructor
@@ -51,7 +54,9 @@ public class SysEnumController {
      */
     @GetMapping("/batch")
     public Result<Map<String, List<OptionItem<Object>>>> getBatchGet(
-            @RequestParam(value = "names", required = false) List<String> names
+            @RequestParam(value = "names", required = false)
+            @Size(max = 100, message = "单次批量查询枚举数量不能超过 100 个")
+            List<@Size(max = 64, message = "枚举名称长度不能超过 64 个字符") String> names
     ) {
         return Result.success(enumDictionaryRegistry.getBatchOptions(names));
     }
@@ -80,7 +85,9 @@ public class SysEnumController {
      */
     @PostMapping("/batch")
     public Result<Map<String, List<OptionItem<Object>>>> getBatchPost(
-            @RequestBody(required = false) List<String> names
+            @RequestBody(required = false)
+            @Size(max = 100, message = "单次批量查询枚举数量不能超过 100 个")
+            List<@Size(max = 64, message = "枚举名称长度不能超过 64 个字符") String> names
     ) {
         return Result.success(enumDictionaryRegistry.getBatchOptions(names));
     }

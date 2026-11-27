@@ -11,6 +11,7 @@ import io.github.atengk.boot.storage.template.StorageOperations;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.api.command.UploadAvatarCommand;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -28,6 +29,7 @@ import java.util.UUID;
  * @author Ateng
  * @since 2026-11-25
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class AvatarStorageHelper {
@@ -98,6 +100,54 @@ public class AvatarStorageHelper {
             UploadAvatarCommand cmd,
             ValidatedAvatar validated
     ) {
+        return uploadAvatarObject(storage, tenantId, userId, cmd, validated, true);
+    }
+
+    /**
+     * 在数据库事务外上传新头像（不注册事务同步钩子，由调用方负责持久化失败时补偿删除）。
+     *
+     * @param storage   对象存储操作模板
+     * @param tenantId  租户主键
+     * @param userId    用户主键
+     * @param cmd       原始上传指令
+     * @param validated 前置校验元信息
+     * @return 写入成功后的相对对象键
+     */
+    public String uploadWithoutTransaction(
+            StorageOperations storage,
+            Long tenantId,
+            Long userId,
+            UploadAvatarCommand cmd,
+            ValidatedAvatar validated
+    ) {
+        return uploadAvatarObject(storage, tenantId, userId, cmd, validated, false);
+    }
+
+    /**
+     * 静默删除指定对象（专供数据库写事务失败时的反向补偿，吞掉删除次生异常避免掩盖主事务根因）。
+     *
+     * @param storage    对象存储操作模板
+     * @param objectPath 待补偿删除的对象相对键
+     */
+    public void deleteQuietly(StorageOperations storage, String objectPath) {
+        if (storage == null || !StringUtils.hasText(objectPath)) {
+            return;
+        }
+        try {
+            storage.delete(objectPath.trim());
+        } catch (RuntimeException | Error ex) {
+            log.warn("事务失败补偿删除新头像对象异常（已静默忽略保留主异常）: objectPath={}", objectPath, ex);
+        }
+    }
+
+    private String uploadAvatarObject(
+            StorageOperations storage,
+            Long tenantId,
+            Long userId,
+            UploadAvatarCommand cmd,
+            ValidatedAvatar validated,
+            boolean withRollbackDelete
+    ) {
         String objectPath = String.format(
                 "avatar/%d/%d/%s.%s",
                 tenantId,
@@ -105,17 +155,18 @@ public class AvatarStorageHelper {
                 UUID.randomUUID().toString().replace("-", ""),
                 validated.extension()
         );
+        StorageUploadRequest uploadRequest = StorageUploadRequest.builder()
+                .path(objectPath)
+                .inputStream(new ByteArrayInputStream(cmd.getContent()))
+                .contentType(validated.mimeType())
+                .size(cmd.getContent().length)
+                .publicRead(false)
+                .overwrite(false)
+                .build();
         try {
-            StorageObject uploaded = storage.uploadWithRollbackDelete(
-                    StorageUploadRequest.builder()
-                            .path(objectPath)
-                            .inputStream(new ByteArrayInputStream(cmd.getContent()))
-                            .contentType(validated.mimeType())
-                            .size(cmd.getContent().length)
-                            .publicRead(false)
-                            .overwrite(false)
-                            .build()
-            );
+            StorageObject uploaded = withRollbackDelete
+                    ? storage.uploadWithRollbackDelete(uploadRequest)
+                    : storage.upload(uploadRequest);
             return uploaded != null && StringUtils.hasText(uploaded.getPath())
                     ? uploaded.getPath().trim()
                     : objectPath;

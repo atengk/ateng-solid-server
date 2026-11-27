@@ -3,7 +3,9 @@ package io.github.atengk.solid.system.request;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 import lombok.ToString;
@@ -37,31 +39,37 @@ public class UserCreateRequest {
     /**
      * 初始登录密码（选填；留空时读取系统参数 {@code sys.user.initPassword}，统一执行强口令复杂度校验）
      */
+    @Size(max = 128, message = "登录密码长度不能超过 128 个字符")
     private String password;
 
     /**
      * 归属部门主键（选填）
      */
+    @Positive(message = "归属部门主键必须为正整数")
     private Long deptId;
 
     /**
      * 关联岗位主键集合（选填）
      */
-    private List<Long> postIds;
+    @Size(max = 100, message = "关联岗位数量不能超过 100 个")
+    private List<@NotNull(message = "岗位主键不能为空") @Positive(message = "岗位主键必须为正整数") Long> postIds;
 
     /**
      * 关联角色主键集合（选填）
      */
-    private List<Long> roleIds;
+    @Size(max = 100, message = "关联角色数量不能超过 100 个")
+    private List<@NotNull(message = "角色主键不能为空") @Positive(message = "角色主键必须为正整数") Long> roleIds;
 
     /**
      * 手机号码（选填，同租户未删除唯一）
      */
+    @Size(max = 32, message = "手机号码长度不能超过 32 个字符")
     private String phone;
 
     /**
      * 电子邮箱（选填，同租户未删除唯一）
      */
+    @Size(max = 128, message = "电子邮箱长度不能超过 128 个字符")
     private String email;
 
     /**

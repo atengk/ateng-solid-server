@@ -52,20 +52,18 @@ public class SysLogQueryService {
         Page<SysOperLog> pageRequest = PageUtil.toPage(
                 safeQuery, SysOperLog.class, true, SystemContextSupport.DEFAULT_MAX_PAGE_SIZE
         );
-        String module = SystemContextSupport.trimToNull(safeQuery.getModule());
-        String userName = SystemContextSupport.trimToNull(safeQuery.getUserName());
         String traceId = SystemContextSupport.trimToNull(safeQuery.getTraceId());
 
         LambdaQueryWrapper<SysOperLog> wrapper = Wrappers.<SysOperLog>lambdaQuery()
                 .eq(SysOperLog::getTenantId, tenantId)
-                .like(module != null, SysOperLog::getModule, module)
-                .like(userName != null, SysOperLog::getUserName, userName)
                 .eq(safeQuery.getOperateType() != null, SysOperLog::getOperateType, safeQuery.getOperateType())
                 .eq(safeQuery.getStatus() != null, SysOperLog::getStatus, safeQuery.getStatus())
                 .eq(traceId != null, SysOperLog::getTraceId, traceId)
                 .ge(safeQuery.getBeginTime() != null, SysOperLog::getOperateTime, safeQuery.getBeginTime())
                 .le(safeQuery.getEndTime() != null, SysOperLog::getOperateTime, safeQuery.getEndTime());
-        if (CollectionUtils.isEmpty(safeQuery.getSorts())) {
+        SystemContextSupport.applyContainsLike(wrapper, SysOperLog::getModule, safeQuery.getModule());
+        SystemContextSupport.applyContainsLike(wrapper, SysOperLog::getUserName, safeQuery.getUserName());
+        if (CollectionUtils.isEmpty(pageRequest.orders())) {
             wrapper.orderByDesc(SysOperLog::getOperateTime).orderByDesc(SysOperLog::getId);
         }
 
@@ -113,19 +111,17 @@ public class SysLogQueryService {
         Page<SysLoginLog> pageRequest = PageUtil.toPage(
                 safeQuery, SysLoginLog.class, true, SystemContextSupport.DEFAULT_MAX_PAGE_SIZE
         );
-        String username = SystemContextSupport.trimToNull(safeQuery.getUsername());
-        String clientIp = SystemContextSupport.trimToNull(safeQuery.getClientIp());
         String traceId = SystemContextSupport.trimToNull(safeQuery.getTraceId());
 
         LambdaQueryWrapper<SysLoginLog> wrapper = Wrappers.<SysLoginLog>lambdaQuery()
                 .eq(SysLoginLog::getTenantId, tenantId)
-                .like(username != null, SysLoginLog::getUsername, username)
-                .like(clientIp != null, SysLoginLog::getClientIp, clientIp)
                 .eq(safeQuery.getStatus() != null, SysLoginLog::getStatus, safeQuery.getStatus())
                 .eq(traceId != null, SysLoginLog::getTraceId, traceId)
                 .ge(safeQuery.getBeginTime() != null, SysLoginLog::getLoginTime, safeQuery.getBeginTime())
                 .le(safeQuery.getEndTime() != null, SysLoginLog::getLoginTime, safeQuery.getEndTime());
-        if (CollectionUtils.isEmpty(safeQuery.getSorts())) {
+        SystemContextSupport.applyContainsLike(wrapper, SysLoginLog::getUsername, safeQuery.getUsername());
+        SystemContextSupport.applyContainsLike(wrapper, SysLoginLog::getClientIp, safeQuery.getClientIp());
+        if (CollectionUtils.isEmpty(pageRequest.orders())) {
             wrapper.orderByDesc(SysLoginLog::getLoginTime).orderByDesc(SysLoginLog::getId);
         }
 

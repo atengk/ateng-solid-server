@@ -1,10 +1,12 @@
 package io.github.atengk.solid.system.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.mybatisplus.util.BatchUtil;
+import io.github.atengk.boot.mybatisplus.util.PessimisticLockUtil;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.api.enums.DataScopeType;
 import io.github.atengk.solid.system.api.result.SystemResultCode;
@@ -257,17 +259,19 @@ public class SysRoleService {
     public void deleteRoles(String ids) {
         Long tenantId = contextSupport.requireEffectiveTenantId();
         List<Long> roleIds = SystemContextSupport.parsePathIds(ids);
+        List<Long> sortedRoleIds = roleIds.stream().sorted().toList();
         ActorPrivilegeContext actor = rbacPrivilegeGuard.resolveActorContext(
                 tenantId, contextSupport.resolveCurrentActorUserId()
         );
 
         List<String> deletedKeys = TenantContextHolder.runWithTenant(tenantId, () -> {
-            List<SysRole> targets = sysRoleMapper.selectList(
-                    Wrappers.<SysRole>lambdaQuery()
-                            .eq(SysRole::getTenantId, tenantId)
-                            .in(SysRole::getId, roleIds)
-            );
-            if (CollectionUtils.isEmpty(targets) || targets.size() != roleIds.size()) {
+            LambdaQueryWrapper<SysRole> lockQuery = Wrappers.<SysRole>lambdaQuery()
+                    .eq(SysRole::getTenantId, tenantId)
+                    .in(SysRole::getId, sortedRoleIds)
+                    .orderByAsc(SysRole::getId);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            List<SysRole> targets = sysRoleMapper.selectList(lockQuery);
+            if (CollectionUtils.isEmpty(targets) || targets.size() != sortedRoleIds.size()) {
                 throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "存在不存在或跨租户的角色记录");
             }
             Set<String> keys = new LinkedHashSet<>(targets.size());
@@ -306,11 +310,13 @@ public class SysRoleService {
         if (id == null || id <= 0L) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "角色主键无效");
         }
-        SysRole role = TenantContextHolder.runWithTenant(tenantId, () -> sysRoleMapper.selectOne(
-                Wrappers.<SysRole>lambdaQuery()
-                        .eq(SysRole::getTenantId, tenantId)
-                        .eq(SysRole::getId, id)
-        ));
+        SysRole role = TenantContextHolder.runWithTenant(tenantId, () -> {
+            LambdaQueryWrapper<SysRole> lockQuery = Wrappers.<SysRole>lambdaQuery()
+                    .eq(SysRole::getTenantId, tenantId)
+                    .eq(SysRole::getId, id);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            return sysRoleMapper.selectOne(lockQuery);
+        });
         if (role == null) {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "目标角色不存在或无权访问");
         }

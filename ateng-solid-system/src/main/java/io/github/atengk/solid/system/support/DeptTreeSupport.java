@@ -30,6 +30,8 @@ public final class DeptTreeSupport {
 
     public static final long ROOT_PARENT_ID = 0L;
     public static final String ROOT_ANCESTORS = "0";
+    public static final int MAX_ANCESTORS_LENGTH = 500;
+    public static final int MAX_DEPT_DEPTH = 10;
     private static final Pattern PHONE_PATTERN = Pattern.compile("^[0-9+\\-()]{5,20}$");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
@@ -140,6 +142,26 @@ public final class DeptTreeSupport {
     }
 
     /**
+     * 校验部门 {@code ancestors} 字符串长度与树深度未突破持久化与架构安全上限（{@code <= 500} 字符、{@code <= 10} 层）。
+     *
+     * @param ancestors 部门祖级路径链
+     */
+    public static void validateAncestorsBounds(String ancestors) {
+        if (!StringUtils.hasText(ancestors) || ancestors.length() > MAX_ANCESTORS_LENGTH) {
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "部门祖级路径长度不能超过 500 个字符");
+        }
+        int depth = 1;
+        for (int i = 0; i < ancestors.length(); i++) {
+            if (ancestors.charAt(i) == ',') {
+                depth++;
+            }
+        }
+        if (depth > MAX_DEPT_DEPTH) {
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "部门树层级深度不能超过 10 层");
+        }
+    }
+
+    /**
      * 裁剪并校验部门名称长度边界（2~50 字符，且禁止包含 Excel 全路径分隔符 {@code /}）。
      *
      * @param rawName 原始部门名称
@@ -201,11 +223,16 @@ public final class DeptTreeSupport {
             existingIds.add(dept.getId());
             grouped.computeIfAbsent(dept.getParentId(), ignored -> new ArrayList<>()).add(dept);
         }
+        Set<Long> visited = new HashSet<>(depts.size());
         List<DeptTreeVO> roots = new ArrayList<>();
         for (SysDept dept : depts) {
-            if (dept.getParentId() == null || Objects.equals(dept.getParentId(), ROOT_PARENT_ID)
-                    || !existingIds.contains(dept.getParentId())) {
-                roots.add(assembleNode(dept, grouped, leaderMap, includeContact));
+            if (dept == null || dept.getId() == null) {
+                continue;
+            }
+            if ((dept.getParentId() == null || Objects.equals(dept.getParentId(), ROOT_PARENT_ID)
+                    || !existingIds.contains(dept.getParentId()))
+                    && visited.add(dept.getId())) {
+                roots.add(assembleNode(dept, grouped, leaderMap, includeContact, visited));
             }
         }
         return roots.isEmpty() ? Collections.emptyList() : roots;
@@ -215,14 +242,22 @@ public final class DeptTreeSupport {
             SysDept dept,
             Map<Long, List<SysDept>> grouped,
             Map<Long, SysUser> leaderMap,
-            boolean includeContact
+            boolean includeContact,
+            Set<Long> visited
     ) {
         List<SysDept> childrenEntities = grouped.get(dept.getId());
-        List<DeptTreeVO> children = CollectionUtils.isEmpty(childrenEntities)
-                ? Collections.emptyList()
-                : childrenEntities.stream()
-                        .map(child -> assembleNode(child, grouped, leaderMap, includeContact))
-                        .toList();
+        List<DeptTreeVO> children;
+        if (CollectionUtils.isEmpty(childrenEntities)) {
+            children = Collections.emptyList();
+        } else {
+            List<DeptTreeVO> assembled = new ArrayList<>(childrenEntities.size());
+            for (SysDept child : childrenEntities) {
+                if (child != null && child.getId() != null && visited.add(child.getId())) {
+                    assembled.add(assembleNode(child, grouped, leaderMap, includeContact, visited));
+                }
+            }
+            children = assembled.isEmpty() ? Collections.emptyList() : assembled;
+        }
         SysUser leader = dept.getLeaderUserId() != null ? leaderMap.get(dept.getLeaderUserId()) : null;
         return DeptTreeVO.builder()
                 .id(dept.getId())

@@ -1,10 +1,12 @@
 package io.github.atengk.solid.system.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.mybatisplus.util.BatchUtil;
+import io.github.atengk.boot.mybatisplus.util.PessimisticLockUtil;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.api.result.SystemResultCode;
 import io.github.atengk.solid.system.entity.SysTenant;
@@ -90,11 +92,12 @@ public class SysTenantPackageService {
         if (request == null || request.getId() == null || request.getId() <= 0L) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "修改套餐必须传入有效主键");
         }
-        SysTenantPackage existing = menuSyncSupport.requirePackageExists(request.getId());
-        NormalizedPackagePayload payload = validateAndNormalize(existing, request);
-        List<Long> newMenuIds = menuSyncSupport.validateAndNormalizePackageMenuIds(request.getMenuIds());
 
         TenantContextHolder.runWithoutTenant(() -> {
+            SysTenantPackage existing = menuSyncSupport.requirePackageExistsForUpdate(request.getId());
+            NormalizedPackagePayload payload = validateAndNormalize(existing, request);
+            List<Long> newMenuIds = menuSyncSupport.validateAndNormalizePackageMenuIds(request.getMenuIds());
+
             assertUniquePackageName(existing.getId(), payload.packageName());
             List<Long> oldMenuIds = menuSyncSupport.loadBoundMenuIds(existing.getId());
 
@@ -133,18 +136,20 @@ public class SysTenantPackageService {
     public void updatePackageStatus(Long id, Integer status) {
         contextSupport.requireMultiTenantPlatformAccess();
         Integer validStatus = SystemContextSupport.requireValidStatus(status);
-        SysTenantPackage existing = menuSyncSupport.requirePackageExists(id);
 
-        TenantContextHolder.runWithoutTenant(() -> sysTenantPackageMapper.update(
-                new SysTenantPackage(),
-                Wrappers.<SysTenantPackage>lambdaUpdate()
-                        .eq(SysTenantPackage::getId, existing.getId())
-                        .set(SysTenantPackage::getStatus, validStatus)
-        ));
+        TenantContextHolder.runWithoutTenant(() -> {
+            SysTenantPackage existing = menuSyncSupport.requirePackageExistsForUpdate(id);
+            sysTenantPackageMapper.update(
+                    new SysTenantPackage(),
+                    Wrappers.<SysTenantPackage>lambdaUpdate()
+                            .eq(SysTenantPackage::getId, existing.getId())
+                            .set(SysTenantPackage::getStatus, validStatus)
+            );
+        });
     }
 
     /**
-     * 批量删除未被租户引用的租户套餐；存在任一未删除租户绑定时整批拦截抛出 {@code 102005}。
+     * 批量删除未被租户引用的租户套餐；按升序加 {@code FOR UPDATE} 行锁校验引用，存在任一租户绑定阻断抛出 {@code 102005}。
      *
      * @param ids 逗号分隔的套餐主键列表串
      */
@@ -152,20 +157,23 @@ public class SysTenantPackageService {
     public void deletePackages(String ids) {
         contextSupport.requireMultiTenantPlatformAccess();
         List<Long> idList = SystemContextSupport.parsePathIds(ids);
+        List<Long> sortedIds = idList.stream().sorted().toList();
 
         TenantContextHolder.runWithoutTenant(() -> {
-            List<SysTenantPackage> targets = sysTenantPackageMapper.selectList(
-                    Wrappers.<SysTenantPackage>lambdaQuery().in(SysTenantPackage::getId, idList)
-            );
-            if (CollectionUtils.isEmpty(targets) || targets.size() != idList.size()) {
+            LambdaQueryWrapper<SysTenantPackage> lockQuery = Wrappers.<SysTenantPackage>lambdaQuery()
+                    .in(SysTenantPackage::getId, sortedIds)
+                    .orderByAsc(SysTenantPackage::getId);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            List<SysTenantPackage> targets = sysTenantPackageMapper.selectList(lockQuery);
+            if (CollectionUtils.isEmpty(targets) || targets.size() != sortedIds.size()) {
                 throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "部分目标租户套餐不存在或已被删除");
             }
-            assertNoTenantReferences(targets, idList);
+            assertNoTenantReferences(targets, sortedIds);
 
             sysTenantPackageMenuMapper.delete(
-                    Wrappers.<SysTenantPackageMenu>lambdaQuery().in(SysTenantPackageMenu::getPackageId, idList)
+                    Wrappers.<SysTenantPackageMenu>lambdaQuery().in(SysTenantPackageMenu::getPackageId, sortedIds)
             );
-            sysTenantPackageMapper.deleteByIds(idList);
+            sysTenantPackageMapper.deleteByIds(sortedIds);
         });
     }
 

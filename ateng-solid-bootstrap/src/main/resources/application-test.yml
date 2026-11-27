@@ -33,6 +33,8 @@ ateng:
         enabled: false
       ratelimit:
         enabled: false
+      idempotent:
+        enabled: false
     mybatis-plus:
       crypto:
         secret-key: ateng-solid-test-deterministic-key-32b

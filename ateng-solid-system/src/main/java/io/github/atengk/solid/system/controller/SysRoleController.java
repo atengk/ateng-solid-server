@@ -7,6 +7,7 @@ import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.idempotent.annotation.Idempotent;
 import io.github.atengk.solid.system.request.RoleDataScopeRequest;
 import io.github.atengk.solid.system.request.RoleQueryRequest;
 import io.github.atengk.solid.system.request.RoleSaveRequest;
@@ -97,6 +98,7 @@ public class SysRoleController {
      * @return 新建角色主键
      */
     @SaCheckPermission("system:role:create")
+    @Idempotent
     @OperateLog(module = "角色管理", type = OperateTypeEnum.INSERT, description = "新增角色")
     @PostMapping
     public Result<Long> create(@Valid @RequestBody RoleSaveRequest request) {

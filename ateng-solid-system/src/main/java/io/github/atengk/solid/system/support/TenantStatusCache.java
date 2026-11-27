@@ -76,6 +76,7 @@ public class TenantStatusCache {
                 TenantAuthDTO.class,
                 () -> loader.apply(tenantId),
                 resolveTtl(),
+                () -> localFallback.remove(tenantId),
                 () -> getOrLoadFromLocal(tenantId, loader)
         );
     }

@@ -1,6 +1,11 @@
 package io.github.atengk.solid.system.support;
 
 import cn.dev33.satoken.SaManager;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.LambdaUtils;
+import com.baomidou.mybatisplus.core.toolkit.support.ColumnCache;
+import com.baomidou.mybatisplus.core.toolkit.support.LambdaMeta;
+import com.baomidou.mybatisplus.core.toolkit.support.SFunction;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.context.TenantContextHolder;
@@ -14,15 +19,18 @@ import io.github.atengk.solid.common.properties.SolidTenantProperties;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.ibatis.reflection.property.PropertyNamer;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
@@ -43,6 +51,16 @@ public class SystemContextSupport {
      * 常规管理分页查询单页安全上限
      */
     public static final long DEFAULT_MAX_PAGE_SIZE = 100L;
+
+    /**
+     * 路径批量操作逗号分隔主键数量硬上限
+     */
+    public static final int MAX_PATH_ID_COUNT = 100;
+
+    /**
+     * SQL LIKE 查询跨数据库统一转义符（同时兼容 MySQL 与 H2 MODE=MySQL）
+     */
+    public static final char LIKE_ESCAPE_CHAR = '!';
 
     private static final String SAFE_ERROR_PLACEHOLDER = "系统内部处理异常，详情请检索服务端日志";
     private static final int MAX_AUDIT_ERROR_MSG_LEN = 2000;
@@ -151,6 +169,12 @@ public class SystemContextSupport {
             throw new BusinessException(CommonResultCode.BAD_REQUEST, "目标主键标识列表不能为空");
         }
         String[] segments = ids.split(",");
+        if (segments.length > MAX_PATH_ID_COUNT) {
+            throw new BusinessException(
+                    CommonBizResultCode.PARAM_INVALID,
+                    "单次批量操作主键数量不能超过 " + MAX_PATH_ID_COUNT + " 个"
+            );
+        }
         Set<Long> parsed = new LinkedHashSet<>(segments.length);
         for (String segment : segments) {
             if (!StringUtils.hasText(segment)) {
@@ -168,6 +192,95 @@ public class SystemContextSupport {
             parsed.add(value);
         }
         return new ArrayList<>(parsed);
+    }
+
+    /**
+     * 校验查询或导出时间起止边界，防止起始时间晚于截止时间。
+     *
+     * @param beginTime 起始时间（可为空）
+     * @param endTime   截止时间（可为空）
+     */
+    public static void assertValidTimeRange(LocalDateTime beginTime, LocalDateTime endTime) {
+        if (beginTime != null && endTime != null && beginTime.isAfter(endTime)) {
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "创建时间起止范围不合法");
+        }
+    }
+
+    /**
+     * 对 SQL {@code LIKE} 检索模式字符串执行通配符转义（空白串归 {@code null}，并对 {@code !}、{@code %}、{@code _} 追加 {@code !} 转义前缀）。
+     *
+     * @param raw 原始检索关键字
+     * @return 可安全拼接通配符的转义串；入参为空或纯空白时返回 {@code null}
+     */
+    public static String escapeLikePattern(String raw) {
+        String trimmed = trimToNull(raw);
+        if (trimmed == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder(trimmed.length() + 4);
+        for (int i = 0; i < trimmed.length(); i++) {
+            char ch = trimmed.charAt(i);
+            if (ch == LIKE_ESCAPE_CHAR || ch == '%' || ch == '_') {
+                sb.append(LIKE_ESCAPE_CHAR);
+            }
+            sb.append(ch);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 为 MyBatis-Plus {@link LambdaQueryWrapper} 追加安全包含匹配（{@code column LIKE '%escaped%' ESCAPE '!'}）。
+     *
+     * @param wrapper  查询包装器
+     * @param column   实体列 Lambda 引用
+     * @param rawValue 原始模糊关键字（为空或空白时不追加条件）
+     * @param <T>      实体类型
+     */
+    public static <T> void applyContainsLike(
+            LambdaQueryWrapper<T> wrapper,
+            SFunction<T, ?> column,
+            String rawValue
+    ) {
+        String escaped = escapeLikePattern(rawValue);
+        if (wrapper == null || column == null || escaped == null) {
+            return;
+        }
+        String columnName = resolveColumnName(column);
+        wrapper.apply(columnName + " LIKE {0} ESCAPE '" + LIKE_ESCAPE_CHAR + "'", "%" + escaped + "%");
+    }
+
+    /**
+     * 为 MyBatis-Plus {@link LambdaQueryWrapper} 追加安全右前缀匹配（{@code column LIKE 'escaped%' ESCAPE '!'}）。
+     *
+     * @param wrapper   查询包装器
+     * @param column    实体列 Lambda 引用
+     * @param rawPrefix 原始前缀字符串（为空或空白时不追加条件）
+     * @param <T>       实体类型
+     */
+    public static <T> void applyPrefixLike(
+            LambdaQueryWrapper<T> wrapper,
+            SFunction<T, ?> column,
+            String rawPrefix
+    ) {
+        String escaped = escapeLikePattern(rawPrefix);
+        if (wrapper == null || column == null || escaped == null) {
+            return;
+        }
+        String columnName = resolveColumnName(column);
+        wrapper.apply(columnName + " LIKE {0} ESCAPE '" + LIKE_ESCAPE_CHAR + "'", escaped + "%");
+    }
+
+    private static <T> String resolveColumnName(SFunction<T, ?> column) {
+        LambdaMeta meta = LambdaUtils.extract(column);
+        String fieldName = PropertyNamer.methodToProperty(meta.getImplMethodName());
+        Map<String, ColumnCache> columnMap = LambdaUtils.getColumnMap(meta.getInstantiatedClass());
+        ColumnCache columnCache = columnMap != null ? columnMap.get(LambdaUtils.formatKey(fieldName)) : null;
+        if (columnCache == null) {
+            throw new IllegalArgumentException(
+                    "无法解析实体数据库列名: " + meta.getInstantiatedClass().getName() + "#" + fieldName
+            );
+        }
+        return columnCache.getColumn();
     }
 
     /**

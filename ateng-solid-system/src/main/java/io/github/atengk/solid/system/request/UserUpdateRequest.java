@@ -38,26 +38,31 @@ public class UserUpdateRequest {
     /**
      * 归属部门主键（允许置空解除部门归属）
      */
+    @Positive(message = "归属部门主键必须为正整数")
     private Long deptId;
 
     /**
      * 关联岗位主键集合（传入空集合即清空岗位关联）
      */
-    private List<Long> postIds;
+    @Size(max = 100, message = "关联岗位数量不能超过 100 个")
+    private List<@NotNull(message = "岗位主键不能为空") @Positive(message = "岗位主键必须为正整数") Long> postIds;
 
     /**
      * 关联角色主键集合（传入空集合即清空角色关联；平台内置超管禁止剥离超管角色）
      */
-    private List<Long> roleIds;
+    @Size(max = 100, message = "关联角色数量不能超过 100 个")
+    private List<@NotNull(message = "角色主键不能为空") @Positive(message = "角色主键必须为正整数") Long> roleIds;
 
     /**
      * 手机号码（空白输入清空为 {@code null}）
      */
+    @Size(max = 32, message = "手机号码长度不能超过 32 个字符")
     private String phone;
 
     /**
      * 电子邮箱（空白输入清空为 {@code null}）
      */
+    @Size(max = 128, message = "电子邮箱长度不能超过 128 个字符")
     private String email;
 
     /**

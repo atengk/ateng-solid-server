@@ -113,7 +113,7 @@ public class RemotePermissionServiceImpl implements RemotePermissionService {
                 tenantEnabled
         );
         List<String> permissions = new ArrayList<>();
-        collectReachablePermissions(0L, ctx, permissions);
+        collectReachablePermissions(0L, ctx, permissions, new HashSet<>());
         return permissions.isEmpty() ? Collections.emptyList() : permissions.stream().distinct().toList();
     }
 
@@ -156,7 +156,7 @@ public class RemotePermissionServiceImpl implements RemotePermissionService {
                 platformView,
                 tenantEnabled
         );
-        return buildFilteredSubtree(0L, ctx);
+        return buildFilteredSubtree(0L, ctx, new HashSet<>());
     }
 
     private SysRole findActiveRoleByKey(Long tenantId, String roleKey) {
@@ -237,18 +237,24 @@ public class RemotePermissionServiceImpl implements RemotePermissionService {
         return MenuTreeSupport.groupByParentId(allMenus);
     }
 
-    private List<RouteMenuDTO> buildFilteredSubtree(Long parentId, MenuFilterContext ctx) {
+    private List<RouteMenuDTO> buildFilteredSubtree(Long parentId, MenuFilterContext ctx, Set<Long> visited) {
+        if (parentId == null || !visited.add(parentId)) {
+            return Collections.emptyList();
+        }
         List<SysMenu> candidates = ctx.childrenMap().get(parentId);
         if (CollectionUtils.isEmpty(candidates)) {
             return Collections.emptyList();
         }
         List<RouteMenuDTO> result = new ArrayList<>();
         for (SysMenu menu : candidates) {
+            if (menu == null || menu.getId() == null || visited.contains(menu.getId())) {
+                continue;
+            }
             MenuTypeEnum nodeType = MenuTypeEnum.fromCode(menu.getMenuType());
             if (!ctx.isReachable(menu) || nodeType == null || nodeType == MenuTypeEnum.BUTTON) {
                 continue;
             }
-            List<RouteMenuDTO> children = buildFilteredSubtree(menu.getId(), ctx);
+            List<RouteMenuDTO> children = buildFilteredSubtree(menu.getId(), ctx, visited);
             if (nodeType == MenuTypeEnum.DIRECTORY) {
                 if (!children.isEmpty()) {
                     result.add(toRouteMenuDTO(menu, children));
@@ -262,12 +268,23 @@ public class RemotePermissionServiceImpl implements RemotePermissionService {
         return result.isEmpty() ? Collections.emptyList() : result;
     }
 
-    private void collectReachablePermissions(Long parentId, MenuFilterContext ctx, List<String> collector) {
+    private void collectReachablePermissions(
+            Long parentId,
+            MenuFilterContext ctx,
+            List<String> collector,
+            Set<Long> visited
+    ) {
+        if (parentId == null || !visited.add(parentId)) {
+            return;
+        }
         List<SysMenu> candidates = ctx.childrenMap().get(parentId);
         if (CollectionUtils.isEmpty(candidates)) {
             return;
         }
         for (SysMenu menu : candidates) {
+            if (menu == null || menu.getId() == null || visited.contains(menu.getId())) {
+                continue;
+            }
             MenuTypeEnum nodeType = MenuTypeEnum.fromCode(menu.getMenuType());
             if (!ctx.isReachable(menu) || nodeType == null) {
                 continue;
@@ -280,7 +297,7 @@ public class RemotePermissionServiceImpl implements RemotePermissionService {
             if (inPackage && ctx.roleMenuIds().contains(menu.getId()) && StringUtils.hasText(menu.getPerms())) {
                 collector.add(menu.getPerms().trim());
             }
-            collectReachablePermissions(menu.getId(), ctx, collector);
+            collectReachablePermissions(menu.getId(), ctx, collector, visited);
         }
     }
 

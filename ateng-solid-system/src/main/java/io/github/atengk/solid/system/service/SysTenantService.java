@@ -1,14 +1,15 @@
 package io.github.atengk.solid.system.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
-import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.util.PasswordUtil;
 import io.github.atengk.boot.core.util.TransactionUtil;
-import io.github.atengk.boot.satoken.model.OnlineUser;
-import io.github.atengk.boot.satoken.model.OnlineUserQuery;
+import io.github.atengk.boot.mybatisplus.context.DataPermissionContextHolder;
+import io.github.atengk.boot.mybatisplus.util.PessimisticLockUtil;
 import io.github.atengk.boot.satoken.util.LoginHelper;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
@@ -17,8 +18,10 @@ import io.github.atengk.solid.common.validator.PasswordPolicyValidator;
 import io.github.atengk.solid.system.api.result.SystemResultCode;
 import io.github.atengk.solid.system.entity.SysTenant;
 import io.github.atengk.solid.system.entity.SysTenantPackage;
+import io.github.atengk.solid.system.entity.SysUser;
 import io.github.atengk.solid.system.mapper.SysTenantMapper;
 import io.github.atengk.solid.system.mapper.SysTenantPackageMapper;
+import io.github.atengk.solid.system.mapper.SysUserMapper;
 import io.github.atengk.solid.system.request.TenantCreateRequest;
 import io.github.atengk.solid.system.request.TenantUpdateRequest;
 import io.github.atengk.solid.system.support.SystemContextSupport;
@@ -29,10 +32,10 @@ import io.github.atengk.solid.system.support.TenantStatusCache;
 import io.github.atengk.solid.system.support.UserContactAndDictSupport;
 import io.github.atengk.solid.system.vo.CreateTenantVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -49,19 +52,19 @@ import java.util.regex.Pattern;
  * @author Ateng
  * @since 2026-11-25
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SysTenantService {
 
     private static final int UNLIMITED_QUOTA = -1;
-    private static final int ONLINE_KICKOUT_PAGE_SIZE = 100;
-    private static final int ONLINE_KICKOUT_MAX_SCAN_LIMIT = 20_000;
-    private static final int MAX_KICKOUT_BATCHES = 1000;
+    private static final int KICKOUT_USER_BATCH_SIZE = 500;
     private static final Pattern TENANT_CODE_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{4,32}$");
 
     private final SystemContextSupport contextSupport;
     private final SysTenantMapper sysTenantMapper;
     private final SysTenantPackageMapper sysTenantPackageMapper;
+    private final SysUserMapper sysUserMapper;
     private final TenantPackageMenuSyncSupport menuSyncSupport;
     private final TenantInitializationSupport tenantInitializationSupport;
     private final TenantStatusCache tenantStatusCache;
@@ -96,9 +99,8 @@ public class SysTenantService {
 
         assertTenantCodeUnique(tenantCode);
         requireActivePackage(request.getPackageId());
-        List<Long> packageMenuIds = menuSyncSupport.loadEligiblePackageMenuIds(request.getPackageId());
 
-        // 2. 开启极短写事务顺序落库 4 步初始化（任一步异常整体回滚，零孤儿数据）
+        // 2. 开启极短写事务锁定套餐行、读取有效菜单并顺序落库 4 步初始化（任一步异常整体回滚，零孤儿数据）
         CreateTenantVO created = tenantInitializationSupport.provisionNewTenantAtomically(new ProvisionTenantCommand(
                 tenantCode,
                 tenantName,
@@ -108,8 +110,7 @@ public class SysTenantService {
                 status,
                 remark,
                 adminUsername,
-                encodedPassword,
-                packageMenuIds
+                encodedPassword
         ));
         tenantStatusCache.evict(created.getTenantId());
         return created;
@@ -126,7 +127,7 @@ public class SysTenantService {
         if (request == null || request.getId() == null || request.getId() < 0L) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "修改租户必须传入有效主键");
         }
-        SysTenant existing = requireTenantExists(request.getId());
+        SysTenant existing = requireTenantExistsForUpdate(request.getId());
         if (SolidConstants.PLATFORM_TENANT_ID.equals(existing.getId())) {
             updatePlatformDefaultTenant(existing, request);
             return;
@@ -150,7 +151,7 @@ public class SysTenantService {
         if (SolidConstants.PLATFORM_TENANT_ID.equals(id)) {
             throw new BusinessException(SystemResultCode.PLATFORM_TENANT_PROTECTED, "平台内置默认租户禁止停用");
         }
-        SysTenant existing = requireTenantExists(id);
+        SysTenant existing = requireTenantExistsForUpdate(id);
 
         TenantContextHolder.runWithoutTenant(() -> sysTenantMapper.update(
                 new SysTenant(),
@@ -180,18 +181,21 @@ public class SysTenantService {
         if (idList.contains(SolidConstants.PLATFORM_TENANT_ID)) {
             throw new BusinessException(SystemResultCode.PLATFORM_TENANT_PROTECTED, "平台内置默认租户禁止删除");
         }
+        List<Long> sortedIds = idList.stream().sorted().toList();
 
         TenantContextHolder.runWithoutTenant(() -> {
-            List<SysTenant> targets = sysTenantMapper.selectList(
-                    Wrappers.<SysTenant>lambdaQuery().in(SysTenant::getId, idList)
-            );
-            if (CollectionUtils.isEmpty(targets) || targets.size() != idList.size()) {
+            LambdaQueryWrapper<SysTenant> lockQuery = Wrappers.<SysTenant>lambdaQuery()
+                    .in(SysTenant::getId, sortedIds)
+                    .orderByAsc(SysTenant::getId);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            List<SysTenant> targets = sysTenantMapper.selectList(lockQuery);
+            if (CollectionUtils.isEmpty(targets) || targets.size() != sortedIds.size()) {
                 throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "部分目标租户不存在或已被删除");
             }
-            sysTenantMapper.deleteByIds(idList);
+            sysTenantMapper.deleteByIds(sortedIds);
         });
 
-        List<Long> snapshotIds = List.copyOf(idList);
+        List<Long> snapshotIds = List.copyOf(sortedIds);
         TransactionUtil.executeAfterCommit(() -> {
             for (Long tenantId : snapshotIds) {
                 tenantStatusCache.evict(tenantId);
@@ -245,9 +249,9 @@ public class SysTenantService {
 
         boolean packageChanged = !Objects.equals(existing.getPackageId(), targetPackageId);
         if (packageChanged) {
-            requireActivePackage(targetPackageId);
+            lockOrderedPackagesAndAssertTargetActive(existing.getPackageId(), targetPackageId);
         } else {
-            requireExistingPackage(targetPackageId);
+            requireExistingPackageForUpdate(targetPackageId);
         }
 
         applyOrdinaryTenantUpdate(existing.getId(), tenantName, targetPackageId,
@@ -258,9 +262,13 @@ public class SysTenantService {
 
         boolean disabling = CommonStatusEnum.DISABLED.getCode().equals(targetStatus)
                 && !CommonStatusEnum.DISABLED.getCode().equals(existing.getStatus());
+        LocalDateTime newExpireTime = request.getExpireTime();
+        boolean newlyExpired = newExpireTime != null
+                && !newExpireTime.isAfter(LocalDateTime.now())
+                && !Objects.equals(existing.getExpireTime(), newExpireTime);
         TransactionUtil.executeAfterCommit(() -> {
             tenantStatusCache.evict(existing.getId());
-            if (disabling) {
+            if (disabling || newlyExpired) {
                 kickoutAllSessionsForTenants(List.of(existing.getId()));
             }
         });
@@ -292,8 +300,13 @@ public class SysTenantService {
         }
     }
 
-    private SysTenant requireTenantExists(Long id) {
-        SysTenant tenant = TenantContextHolder.runWithoutTenant(() -> sysTenantMapper.selectById(id));
+    private SysTenant requireTenantExistsForUpdate(Long id) {
+        SysTenant tenant = TenantContextHolder.runWithoutTenant(() -> {
+            LambdaQueryWrapper<SysTenant> lockQuery = Wrappers.<SysTenant>lambdaQuery()
+                    .eq(SysTenant::getId, id);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            return sysTenantMapper.selectOne(lockQuery);
+        });
         if (tenant == null) {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "目标租户不存在");
         }
@@ -309,8 +322,38 @@ public class SysTenantService {
         }
     }
 
-    private void requireExistingPackage(Long packageId) {
-        SysTenantPackage pkg = TenantContextHolder.runWithoutTenant(() -> sysTenantPackageMapper.selectById(packageId));
+    private void lockOrderedPackagesAndAssertTargetActive(Long oldPackageId, Long targetPackageId) {
+        List<Long> sortedIds = java.util.stream.Stream.of(oldPackageId, targetPackageId)
+                .filter(id -> id != null && id > 0L)
+                .distinct()
+                .sorted()
+                .toList();
+        if (sortedIds.isEmpty()) {
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "所选租户套餐不存在或已停用");
+        }
+        List<SysTenantPackage> lockedPackages = TenantContextHolder.runWithoutTenant(() -> {
+            LambdaQueryWrapper<SysTenantPackage> lockQuery = Wrappers.<SysTenantPackage>lambdaQuery()
+                    .in(SysTenantPackage::getId, sortedIds)
+                    .orderByAsc(SysTenantPackage::getId);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            return SystemContextSupport.safeList(sysTenantPackageMapper.selectList(lockQuery));
+        });
+        SysTenantPackage targetPkg = lockedPackages.stream()
+                .filter(pkg -> pkg != null && Objects.equals(pkg.getId(), targetPackageId))
+                .findFirst()
+                .orElse(null);
+        if (targetPkg == null || !CommonStatusEnum.NORMAL.getCode().equals(targetPkg.getStatus())) {
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "所选租户套餐不存在或已停用");
+        }
+    }
+
+    private void requireExistingPackageForUpdate(Long packageId) {
+        SysTenantPackage pkg = TenantContextHolder.runWithoutTenant(() -> {
+            LambdaQueryWrapper<SysTenantPackage> lockQuery = Wrappers.<SysTenantPackage>lambdaQuery()
+                    .eq(SysTenantPackage::getId, packageId);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            return sysTenantPackageMapper.selectOne(lockQuery);
+        });
         if (pkg == null) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "所选租户套餐不存在");
         }
@@ -331,40 +374,50 @@ public class SysTenantService {
             if (tenantId == null || SolidConstants.PLATFORM_TENANT_ID.equals(tenantId)) {
                 continue;
             }
-            kickoutSingleTenantSessions(String.valueOf(tenantId));
+            kickoutSingleTenantSessions(tenantId);
         }
     }
 
-    private void kickoutSingleTenantSessions(String tenantIdStr) {
-        OnlineUserQuery queryByTenant = OnlineUserQuery.builder()
-                .tenantId(tenantIdStr)
-                .maxScanLimit(ONLINE_KICKOUT_MAX_SCAN_LIMIT)
-                .build();
-        Set<String> attemptedTokens = new HashSet<>();
-        int pageNum = 1;
-        for (int batch = 0; batch < MAX_KICKOUT_BATCHES; batch++) {
-            PageResult<OnlineUser> page = LoginHelper.searchOnlineUserPage(
-                    SolidConstants.ADMIN_LOGIN_TYPE,
-                    queryByTenant,
-                    pageNum,
-                    ONLINE_KICKOUT_PAGE_SIZE
+    private void kickoutSingleTenantSessions(Long tenantId) {
+        String tenantIdStr = String.valueOf(tenantId);
+        Long lastUserId = null;
+        while (true) {
+            Long cursorId = lastUserId;
+            List<SysUser> batchUsers = DataPermissionContextHolder.runWithoutPermission(() ->
+                    TenantContextHolder.runWithTenant(tenantId, () -> {
+                        Page<SysUser> page = sysUserMapper.selectPage(
+                                new Page<>(1, KICKOUT_USER_BATCH_SIZE, false),
+                                Wrappers.<SysUser>lambdaQuery()
+                                        .select(SysUser::getId)
+                                        .eq(SysUser::getTenantId, tenantId)
+                                        .gt(cursorId != null, SysUser::getId, cursorId)
+                                        .orderByAsc(SysUser::getId)
+                        );
+                        return page != null ? page.getRecords() : Collections.emptyList();
+                    })
             );
-            List<OnlineUser> records = page != null ? page.getRecords() : Collections.emptyList();
-            if (CollectionUtils.isEmpty(records)) {
+            if (CollectionUtils.isEmpty(batchUsers)) {
                 return;
             }
-            boolean kickedAnyNewToken = false;
-            for (OnlineUser onlineUser : records) {
-                String tokenValue = onlineUser != null ? onlineUser.getTokenValue() : null;
-                if (!StringUtils.hasText(tokenValue) || !attemptedTokens.add(tokenValue)) {
+            Long maxIdInBatch = null;
+            for (SysUser user : batchUsers) {
+                if (user == null || user.getId() == null) {
                     continue;
                 }
-                LoginHelper.kickoutByTokenForTenant(SolidConstants.ADMIN_LOGIN_TYPE, tokenValue, tenantIdStr);
-                kickedAnyNewToken = true;
+                maxIdInBatch = user.getId();
+                String compositeLoginId = LoginHelper.buildCompositeLoginId(tenantIdStr, String.valueOf(user.getId()));
+                try {
+                    LoginHelper.kickoutByLoginType(SolidConstants.ADMIN_LOGIN_TYPE, compositeLoginId);
+                } catch (RuntimeException ex) {
+                    log.warn("强退租户用户在线会话异常，已跳过继续处理后续用户: tenantId={}, userId={}", tenantId, user.getId(), ex);
+                }
             }
-            if (!kickedAnyNewToken) {
-                pageNum++;
+            if (batchUsers.size() < KICKOUT_USER_BATCH_SIZE
+                    || maxIdInBatch == null
+                    || Objects.equals(maxIdInBatch, cursorId)) {
+                return;
             }
+            lastUserId = maxIdInBatch;
         }
     }
 

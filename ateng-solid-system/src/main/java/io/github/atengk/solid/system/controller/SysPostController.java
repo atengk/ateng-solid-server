@@ -6,6 +6,7 @@ import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.idempotent.annotation.Idempotent;
 import io.github.atengk.solid.system.request.PostQueryRequest;
 import io.github.atengk.solid.system.request.PostSaveRequest;
 import io.github.atengk.solid.system.request.StatusUpdateRequest;
@@ -80,6 +81,7 @@ public class SysPostController {
      * @return 新建岗位主键
      */
     @SaCheckPermission("system:post:create")
+    @Idempotent
     @OperateLog(module = "岗位管理", type = OperateTypeEnum.INSERT, description = "新增岗位")
     @PostMapping
     public Result<Long> create(@Valid @RequestBody PostSaveRequest request) {

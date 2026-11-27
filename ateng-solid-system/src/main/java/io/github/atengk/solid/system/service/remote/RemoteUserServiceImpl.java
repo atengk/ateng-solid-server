@@ -1,9 +1,11 @@
 package io.github.atengk.solid.system.service.remote;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
+import io.github.atengk.boot.mybatisplus.util.PessimisticLockUtil;
 import io.github.atengk.boot.storage.template.StorageOperations;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
@@ -187,17 +189,32 @@ public class RemoteUserServiceImpl implements RemoteUserService {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND);
         }
 
-        // 按规格 §3.1 在单事务内绑定 uploadWithRollbackDelete 与 deleteAfterCommit，保障对象与库表最终一致
-        String persistedPath = TenantContextHolder.runWithTenant(
-                tenantId,
-                () -> transactionTemplate.execute(status -> persistAvatarInTx(
-                        storage, tenantId, userId, cmd, validatedAvatar
-                ))
+        // 1. 前置校验用户存在性后再发起对象存储网络 IO，避免无效请求写孤儿对象
+        if (findUserByTenantAndId(tenantId, userId) == null) {
+            throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND);
+        }
+
+        // 2. 事务外执行新头像上传，彻底释放慢网络 IO 对数据库连接池的占用
+        String finalPath = avatarStorageHelper.uploadWithoutTransaction(
+                storage, tenantId, userId, cmd, validatedAvatar
         );
 
+        // 3. 短事务持用户行锁回写 avatar 并登记提交后旧图清理；事务异常立即静默补偿删除新上传对象
+        try {
+            TenantContextHolder.runWithTenant(
+                    tenantId,
+                    () -> transactionTemplate.executeWithoutResult(status -> persistAvatarInTx(
+                            storage, tenantId, userId, finalPath
+                    ))
+            );
+        } catch (RuntimeException | Error ex) {
+            avatarStorageHelper.deleteQuietly(storage, finalPath);
+            throw ex;
+        }
+
         return AvatarUploadDTO.builder()
-                .objectPath(persistedPath)
-                .avatarUrl(avatarStorageHelper.resolvePreviewUrl(persistedPath))
+                .objectPath(finalPath)
+                .avatarUrl(avatarStorageHelper.resolvePreviewUrl(finalPath))
                 .build();
     }
 
@@ -238,17 +255,13 @@ public class RemoteUserServiceImpl implements RemoteUserService {
         }));
     }
 
-    private String persistAvatarInTx(
+    private void persistAvatarInTx(
             StorageOperations storage,
             Long tenantId,
             Long userId,
-            UploadAvatarCommand cmd,
-            AvatarStorageHelper.ValidatedAvatar validatedAvatar
+            String finalPath
     ) {
-        SysUser existing = requireUserInternal(tenantId, userId);
-        String finalPath = avatarStorageHelper.uploadWithRollbackCompensation(
-                storage, tenantId, userId, cmd, validatedAvatar
-        );
+        SysUser existing = requireUserForUpdateInternal(tenantId, userId);
         sysUserMapper.update(
                 new SysUser(),
                 Wrappers.<SysUser>lambdaUpdate()
@@ -257,7 +270,18 @@ public class RemoteUserServiceImpl implements RemoteUserService {
                         .set(SysUser::getAvatar, finalPath)
         );
         avatarStorageHelper.scheduleDeleteOldAvatarAfterCommit(storage, existing.getAvatar(), finalPath);
-        return finalPath;
+    }
+
+    private SysUser requireUserForUpdateInternal(Long tenantId, Long userId) {
+        LambdaQueryWrapper<SysUser> lockQuery = Wrappers.<SysUser>lambdaQuery()
+                .eq(SysUser::getTenantId, tenantId)
+                .eq(SysUser::getId, userId);
+        PessimisticLockUtil.forUpdate(lockQuery);
+        SysUser user = sysUserMapper.selectOne(lockQuery);
+        if (user == null) {
+            throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND);
+        }
+        return user;
     }
 
     private SysUser findUserByTenantAndId(Long tenantId, Long userId) {

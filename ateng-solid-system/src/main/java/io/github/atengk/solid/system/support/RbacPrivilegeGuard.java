@@ -109,7 +109,7 @@ public class RbacPrivilegeGuard {
             MenuTypeEnum nodeType = MenuTypeEnum.fromCode(menu.getMenuType());
             if (nodeType == MenuTypeEnum.DIRECTORY) {
                 boolean allowedDirectory = actor.boundRawMenuIds().contains(menuId)
-                        || hasDescendantInSet(menuId, env.childrenMap(), requestedSet, actor.effectiveNonDirMenuIds());
+                        || hasDescendantInSet(menuId, env.childrenMap(), requestedSet, actor.effectiveNonDirMenuIds(), new HashSet<>());
                 if (!allowedDirectory) {
                     throw new BusinessException(CommonResultCode.FORBIDDEN, "禁止授予超出自身菜单范围的目录节点：" + menu.getTitle());
                 }
@@ -382,7 +382,7 @@ public class RbacPrivilegeGuard {
             return Collections.emptySet();
         }
         Set<Long> collector = new LinkedHashSet<>();
-        traverseReachableMenus(0L, rawRoleMenuIds, env, collector);
+        traverseReachableMenus(0L, rawRoleMenuIds, env, collector, new HashSet<>());
         return collector.isEmpty() ? Collections.emptySet() : collector;
     }
 
@@ -390,13 +390,20 @@ public class RbacPrivilegeGuard {
             Long parentId,
             Set<Long> rawRoleMenuIds,
             MenuGrantEnvironment env,
-            Set<Long> collector
+            Set<Long> collector,
+            Set<Long> visited
     ) {
+        if (parentId == null || !visited.add(parentId)) {
+            return;
+        }
         List<SysMenu> candidates = env.childrenMap().get(parentId);
         if (CollectionUtils.isEmpty(candidates)) {
             return;
         }
         for (SysMenu menu : candidates) {
+            if (menu == null || menu.getId() == null || visited.contains(menu.getId())) {
+                continue;
+            }
             if (!env.isReachableNode(menu)) {
                 continue;
             }
@@ -411,7 +418,7 @@ public class RbacPrivilegeGuard {
             if (nodeType != MenuTypeEnum.DIRECTORY && inPackage && rawRoleMenuIds.contains(menu.getId())) {
                 collector.add(menu.getId());
             }
-            traverseReachableMenus(menu.getId(), rawRoleMenuIds, env, collector);
+            traverseReachableMenus(menu.getId(), rawRoleMenuIds, env, collector, visited);
         }
     }
 
@@ -419,13 +426,20 @@ public class RbacPrivilegeGuard {
             Long dirId,
             Map<Long, List<SysMenu>> childrenMap,
             Set<Long> requestedSet,
-            Set<Long> allowedNonDirIds
+            Set<Long> allowedNonDirIds,
+            Set<Long> visited
     ) {
+        if (dirId == null || !visited.add(dirId)) {
+            return false;
+        }
         List<SysMenu> children = childrenMap.get(dirId);
         if (CollectionUtils.isEmpty(children)) {
             return false;
         }
         for (SysMenu child : children) {
+            if (child == null || child.getId() == null || visited.contains(child.getId())) {
+                continue;
+            }
             MenuTypeEnum type = MenuTypeEnum.fromCode(child.getMenuType());
             if (type == null) {
                 continue;
@@ -435,7 +449,7 @@ public class RbacPrivilegeGuard {
                     return true;
                 }
             }
-            if (hasDescendantInSet(child.getId(), childrenMap, requestedSet, allowedNonDirIds)) {
+            if (hasDescendantInSet(child.getId(), childrenMap, requestedSet, allowedNonDirIds, visited)) {
                 return true;
             }
         }

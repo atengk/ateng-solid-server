@@ -1,10 +1,12 @@
 package io.github.atengk.solid.system.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.util.TransactionUtil;
+import io.github.atengk.boot.mybatisplus.util.PessimisticLockUtil;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.api.result.SystemResultCode;
 import io.github.atengk.solid.system.entity.SysDictData;
@@ -30,6 +32,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * 动态数据字典写操作服务：严格锁定平台默认租户 {@code 0} 维护，负责字典类型编辑锁、含明细删除保护（{@code 102005}）、
@@ -88,7 +91,7 @@ public class SysDictService {
         if (request == null || request.getId() == null || request.getId() <= 0L) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "修改字典类型时主键不能为空");
         }
-        SysDictType existing = requireDictTypeExists(request.getId());
+        SysDictType existing = requireDictTypeExistsForUpdate(request.getId());
         NormalizedDictType payload = DictValidationSupport.normalizeTypePayload(request, false);
         if (payload.dictType() != null && !existing.getDictType().equals(payload.dictType())) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "字典类型编码创建后锁定只读，禁止修改");
@@ -114,7 +117,7 @@ public class SysDictService {
     public void updateDictTypeStatus(Long id, Integer status) {
         contextSupport.requirePlatformTenantId();
         Integer targetStatus = SystemContextSupport.requireValidStatus(status);
-        SysDictType existing = requireDictTypeExists(id);
+        SysDictType existing = requireDictTypeExistsForUpdate(id);
 
         LambdaUpdateWrapper<SysDictType> wrapper = Wrappers.<SysDictType>lambdaUpdate()
                 .eq(SysDictType::getId, existing.getId())
@@ -132,11 +135,16 @@ public class SysDictService {
     public void deleteDictTypes(String ids) {
         contextSupport.requirePlatformTenantId();
         List<Long> idList = SystemContextSupport.parsePathIds(ids);
+        List<Long> sortedIds = idList.stream().sorted().toList();
 
-        List<SysDictType> existingTypes = TenantContextHolder.runWithoutTenant(
-                () -> sysDictTypeMapper.selectByIds(idList)
-        );
-        if (existingTypes == null || existingTypes.size() != idList.size()) {
+        List<SysDictType> existingTypes = TenantContextHolder.runWithoutTenant(() -> {
+            LambdaQueryWrapper<SysDictType> lockQuery = Wrappers.<SysDictType>lambdaQuery()
+                    .in(SysDictType::getId, sortedIds)
+                    .orderByAsc(SysDictType::getId);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            return sysDictTypeMapper.selectList(lockQuery);
+        });
+        if (existingTypes == null || existingTypes.size() != sortedIds.size()) {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "部分或全部待删除字典类型不存在");
         }
 
@@ -160,12 +168,12 @@ public class SysDictService {
             }
         }
 
-        TenantContextHolder.runWithoutTenant(() -> sysDictTypeMapper.deleteByIds(idList));
+        TenantContextHolder.runWithoutTenant(() -> sysDictTypeMapper.deleteByIds(sortedIds));
         TransactionUtil.executeAfterCommit(() -> dictTypeCodes.forEach(dictDataCache::evict));
     }
 
     /**
-     * 新增动态字典明细；当 {@code isDefault = 1} 时在同一事务内将该类型下其他明细置 {@code 0} 保持互斥唯一。
+     * 新增动态字典明细；先持父 {@code sys_dict_type} 行锁再写入，当 {@code isDefault = 1} 时同一事务内置其余为 {@code 0}。
      *
      * @param request 字典数据保存请求
      * @return 新建字典数据主键
@@ -180,7 +188,7 @@ public class SysDictService {
         NormalizedDictData payload = DictValidationSupport.normalizeDataPayload(request, null);
 
         Long createdId = TenantContextHolder.runWithoutTenant(() -> {
-            assertDictTypeCodeExists(dictType);
+            lockDictTypeByCodeForUpdate(dictType);
             assertDictValueUnique(dictType, payload.dictValue(), null);
             if (Integer.valueOf(1).equals(payload.isDefault())) {
                 clearOtherDefaultsInTx(dictType, null);
@@ -218,22 +226,24 @@ public class SysDictService {
         if (request == null || request.getId() == null || request.getId() <= 0L) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "修改字典数据时主键不能为空");
         }
-        SysDictData existing = requireDictDataExists(request.getId());
+        // 先探明不可变 dictType 并保持 sys_dict_type -> sys_dict_data 统一加锁顺序，随后基于已锁行归一化 payload
+        SysDictData snapshot = requireDictDataExists(request.getId());
         String requestedType = SystemContextSupport.trimToNull(request.getDictType());
-        if (requestedType != null && !existing.getDictType().equals(requestedType)) {
+        if (requestedType != null && !snapshot.getDictType().equals(requestedType)) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "禁止篡改字典数据所属类型编码");
         }
 
-        String dictType = existing.getDictType();
-        NormalizedDictData payload = DictValidationSupport.normalizeDataPayload(request, existing);
-
+        String dictType = snapshot.getDictType();
         TenantContextHolder.runWithoutTenant(() -> {
-            assertDictValueUnique(dictType, payload.dictValue(), existing.getId());
+            lockDictTypeByCodeForUpdate(dictType);
+            SysDictData lockedExisting = requireDictDataExistsForUpdate(snapshot.getId());
+            NormalizedDictData payload = DictValidationSupport.normalizeDataPayload(request, lockedExisting);
+            assertDictValueUnique(dictType, payload.dictValue(), lockedExisting.getId());
             if (Integer.valueOf(1).equals(payload.isDefault())) {
-                clearOtherDefaultsInTx(dictType, existing.getId());
+                clearOtherDefaultsInTx(dictType, lockedExisting.getId());
             }
             LambdaUpdateWrapper<SysDictData> wrapper = Wrappers.<SysDictData>lambdaUpdate()
-                    .eq(SysDictData::getId, existing.getId())
+                    .eq(SysDictData::getId, lockedExisting.getId())
                     .set(SysDictData::getDictLabel, payload.dictLabel())
                     .set(SysDictData::getDictValue, payload.dictValue())
                     .set(SysDictData::getTagType, payload.tagType())
@@ -304,15 +314,15 @@ public class SysDictService {
         sysDictDataMapper.update(new SysDictData(), clearWrapper);
     }
 
-    private SysDictType requireDictTypeExists(Long id) {
+    private SysDictType requireDictTypeExistsForUpdate(Long id) {
         if (id == null || id <= 0L) {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "字典类型不存在");
         }
-        SysDictType existing = TenantContextHolder.runWithoutTenant(() -> sysDictTypeMapper.selectById(id));
-        if (existing == null) {
-            throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "字典类型不存在");
-        }
-        return existing;
+        return TenantContextHolder.runWithoutTenant(() -> requireLockedEntity(
+                Wrappers.<SysDictType>lambdaQuery().eq(SysDictType::getId, id),
+                sysDictTypeMapper::selectOne,
+                "字典类型不存在"
+        ));
     }
 
     private SysDictData requireDictDataExists(Long id) {
@@ -326,13 +336,33 @@ public class SysDictService {
         return existing;
     }
 
-    private void assertDictTypeCodeExists(String dictType) {
-        Long count = sysDictTypeMapper.selectCount(
-                Wrappers.<SysDictType>lambdaQuery().eq(SysDictType::getDictType, dictType)
+    private SysDictData requireDictDataExistsForUpdate(Long id) {
+        return requireLockedEntity(
+                Wrappers.<SysDictData>lambdaQuery().eq(SysDictData::getId, id),
+                sysDictDataMapper::selectOne,
+                "字典数据不存在"
         );
-        if (count == null || count == 0L) {
-            throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "所属字典类型【" + dictType + "】不存在");
+    }
+
+    private void lockDictTypeByCodeForUpdate(String dictType) {
+        requireLockedEntity(
+                Wrappers.<SysDictType>lambdaQuery().eq(SysDictType::getDictType, dictType),
+                sysDictTypeMapper::selectOne,
+                "所属字典类型【" + dictType + "】不存在"
+        );
+    }
+
+    private <E> E requireLockedEntity(
+            LambdaQueryWrapper<E> lockQuery,
+            Function<LambdaQueryWrapper<E>, E> selector,
+            String notFoundMessage
+    ) {
+        PessimisticLockUtil.forUpdate(lockQuery);
+        E entity = selector.apply(lockQuery);
+        if (entity == null) {
+            throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, notFoundMessage);
         }
+        return entity;
     }
 
     private void assertDictTypeUnique(String dictType, Long excludeId) {

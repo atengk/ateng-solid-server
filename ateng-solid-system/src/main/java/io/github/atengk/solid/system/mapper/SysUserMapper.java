@@ -25,6 +25,44 @@ import java.util.List;
 public interface SysUserMapper extends AtengBaseMapper<SysUser> {
 
     /**
+     * 分页查询与导出条数预检共用的多维筛选 {@code WHERE} 片段。
+     */
+    String USER_FILTER_WHERE_SQL = """
+            WHERE u.deleted = 0
+              <if test="criteria.tenantId != null">
+                AND u.tenant_id = #{criteria.tenantId}
+              </if>
+              <if test="criteria.username != null and criteria.username != ''">
+                AND (u.username LIKE CONCAT('%', #{criteria.username}, '%') ESCAPE '!'
+                     OR u.nickname LIKE CONCAT('%', #{criteria.username}, '%') ESCAPE '!')
+              </if>
+              <if test="criteria.encryptedPhone != null and criteria.encryptedPhone != ''">
+                AND u.phone = #{criteria.encryptedPhone}
+              </if>
+              <if test="criteria.status != null">
+                AND u.status = #{criteria.status}
+              </if>
+              <if test="criteria.deptIds != null and !criteria.deptIds.isEmpty()">
+                AND u.dept_id IN
+                <foreach collection="criteria.deptIds" item="deptId" open="(" separator="," close=")">
+                  #{deptId}
+                </foreach>
+              </if>
+              <if test="criteria.ids != null and !criteria.ids.isEmpty()">
+                AND u.id IN
+                <foreach collection="criteria.ids" item="id" open="(" separator="," close=")">
+                  #{id}
+                </foreach>
+              </if>
+              <if test="criteria.beginTime != null">
+                AND u.create_time &gt;= #{criteria.beginTime}
+              </if>
+              <if test="criteria.endTime != null">
+                AND u.create_time &lt;= #{criteria.endTime}
+              </if>
+            """;
+
+    /**
      * 按用户主键单点查询未删除用户的登录账号（用于异步操作审计日志补全真实操作人账号）。
      *
      * @param id 用户主键 ID
@@ -68,44 +106,29 @@ public interface SysUserMapper extends AtengBaseMapper<SysUser> {
                    u.email, u.phone, u.gender, u.avatar, u.status, u.login_ip, u.login_date,
                    u.remark, u.create_by, u.create_time, u.update_by, u.update_time, u.deleted
             FROM sys_user u
-            WHERE u.deleted = 0
-              <if test="criteria.tenantId != null">
-                AND u.tenant_id = #{criteria.tenantId}
-              </if>
-              <if test="criteria.username != null and criteria.username != ''">
-                AND (u.username LIKE CONCAT('%', #{criteria.username}, '%')
-                     OR u.nickname LIKE CONCAT('%', #{criteria.username}, '%'))
-              </if>
-              <if test="criteria.encryptedPhone != null and criteria.encryptedPhone != ''">
-                AND u.phone = #{criteria.encryptedPhone}
-              </if>
-              <if test="criteria.status != null">
-                AND u.status = #{criteria.status}
-              </if>
-              <if test="criteria.deptIds != null and !criteria.deptIds.isEmpty()">
-                AND u.dept_id IN
-                <foreach collection="criteria.deptIds" item="deptId" open="(" separator="," close=")">
-                  #{deptId}
-                </foreach>
-              </if>
-              <if test="criteria.ids != null and !criteria.ids.isEmpty()">
-                AND u.id IN
-                <foreach collection="criteria.ids" item="id" open="(" separator="," close=")">
-                  #{id}
-                </foreach>
-              </if>
-              <if test="criteria.beginTime != null">
-                AND u.create_time &gt;= #{criteria.beginTime}
-              </if>
-              <if test="criteria.endTime != null">
-                AND u.create_time &lt;= #{criteria.endTime}
-              </if>
+            """ + USER_FILTER_WHERE_SQL + """
               <if test="criteria.defaultOrder">
                 ORDER BY u.create_time DESC, u.id DESC
               </if>
             </script>
             """)
     Page<SysUser> selectUserPageWithDataScope(Page<SysUser> page, @Param("criteria") UserQueryCriteria criteria);
+
+    /**
+     * 在 {@link DataScope} 约束下统计满足导出条件的总用户数，用于流式导出前置上限拦截。
+     *
+     * @param criteria 持久化查询条件载体
+     * @return 受权匹配的用户总数
+     */
+    @DataScope(alias = "u", deptColumn = "dept_id", userColumn = "id")
+    @Select("""
+            <script>
+            SELECT COUNT(1)
+            FROM sys_user u
+            """ + USER_FILTER_WHERE_SQL + """
+            </script>
+            """)
+    long countUsersWithDataScope(@Param("criteria") UserQueryCriteria criteria);
 
     /**
      * 在 {@link DataScope} 约束下分页检索当前工作租户内启用用户的轻量下拉选项。
@@ -125,8 +148,8 @@ public interface SysUserMapper extends AtengBaseMapper<SysUser> {
               AND u.deleted = 0
               AND u.status = #{status}
               <if test="keyword != null and keyword != ''">
-                AND (u.username LIKE CONCAT('%', #{keyword}, '%')
-                     OR u.nickname LIKE CONCAT('%', #{keyword}, '%'))
+                AND (u.username LIKE CONCAT('%', #{keyword}, '%') ESCAPE '!'
+                     OR u.nickname LIKE CONCAT('%', #{keyword}, '%') ESCAPE '!')
               </if>
             ORDER BY u.id ASC
             </script>

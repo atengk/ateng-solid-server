@@ -54,7 +54,7 @@ class SysTenantToggleGuardTest {
         TenantStatusCache statusCache = mock(TenantStatusCache.class);
 
         SysTenantQueryService tenantQueryService = new SysTenantQueryService(contextSupport, tenantMapper, pkgMapper, userMapper);
-        SysTenantService tenantService = new SysTenantService(contextSupport, tenantMapper, pkgMapper, syncSupport, initSupport, statusCache);
+        SysTenantService tenantService = new SysTenantService(contextSupport, tenantMapper, pkgMapper, userMapper, syncSupport, initSupport, statusCache);
         SysTenantPackageQueryService pkgQueryService = new SysTenantPackageQueryService(
                 contextSupport, pkgMapper, pkgMenuMapper, tenantMapper, menuMapper, syncSupport);
         SysTenantPackageService pkgService = new SysTenantPackageService(contextSupport, pkgMapper, pkgMenuMapper, tenantMapper, syncSupport);

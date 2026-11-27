@@ -8,6 +8,7 @@ import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.mybatisplus.util.PageUtil;
+import io.github.atengk.boot.mybatisplus.util.PessimisticLockUtil;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.api.result.SystemResultCode;
@@ -57,14 +58,12 @@ public class SysPostService {
                 safeQuery, SysPost.class, true, SystemContextSupport.DEFAULT_MAX_PAGE_SIZE
         );
 
-        String postCode = SystemContextSupport.trimToNull(safeQuery.getPostCode());
-        String postName = SystemContextSupport.trimToNull(safeQuery.getPostName());
         LambdaQueryWrapper<SysPost> wrapper = Wrappers.<SysPost>lambdaQuery()
                 .eq(SysPost::getTenantId, tenantId)
-                .like(postCode != null, SysPost::getPostCode, postCode)
-                .like(postName != null, SysPost::getPostName, postName)
                 .eq(safeQuery.getStatus() != null, SysPost::getStatus, safeQuery.getStatus());
-        if (CollectionUtils.isEmpty(safeQuery.getSorts())) {
+        SystemContextSupport.applyContainsLike(wrapper, SysPost::getPostCode, safeQuery.getPostCode());
+        SystemContextSupport.applyContainsLike(wrapper, SysPost::getPostName, safeQuery.getPostName());
+        if (CollectionUtils.isEmpty(pageRequest.orders())) {
             wrapper.orderByAsc(SysPost::getSort).orderByAsc(SysPost::getId);
         }
 
@@ -167,7 +166,7 @@ public class SysPostService {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "修改岗位时主键不能为空");
         }
         Long tenantId = contextSupport.requireEffectiveTenantId();
-        SysPost existing = requirePost(tenantId, request.getId());
+        SysPost existing = requirePostForUpdate(tenantId, request.getId());
         PostPayload payload = normalizePostPayload(request, existing);
 
         assertPostUnique(tenantId, payload.postCode(), payload.postName(), existing.getId());
@@ -197,7 +196,7 @@ public class SysPostService {
     public void updatePostStatus(Long id, Integer status) {
         Long tenantId = contextSupport.requireEffectiveTenantId();
         Integer targetStatus = SystemContextSupport.requireValidStatus(status);
-        requirePost(tenantId, id);
+        requirePostForUpdate(tenantId, id);
 
         LambdaUpdateWrapper<SysPost> wrapper = Wrappers.<SysPost>lambdaUpdate()
                 .eq(SysPost::getTenantId, tenantId)
@@ -215,19 +214,23 @@ public class SysPostService {
     public void deletePosts(String ids) {
         Long tenantId = contextSupport.requireEffectiveTenantId();
         List<Long> idList = SystemContextSupport.parsePathIds(ids);
+        List<Long> sortedIds = idList.stream().sorted().toList();
 
-        List<SysPost> existingPosts = TenantContextHolder.runWithTenant(tenantId, () -> sysPostMapper.selectList(
-                Wrappers.<SysPost>lambdaQuery()
-                        .eq(SysPost::getTenantId, tenantId)
-                        .in(SysPost::getId, idList)
-        ));
-        if (existingPosts == null || existingPosts.size() != idList.size()) {
+        List<SysPost> existingPosts = TenantContextHolder.runWithTenant(tenantId, () -> {
+            LambdaQueryWrapper<SysPost> lockQuery = Wrappers.<SysPost>lambdaQuery()
+                    .eq(SysPost::getTenantId, tenantId)
+                    .in(SysPost::getId, sortedIds)
+                    .orderByAsc(SysPost::getId);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            return sysPostMapper.selectList(lockQuery);
+        });
+        if (existingPosts == null || existingPosts.size() != sortedIds.size()) {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "部分或全部待删除岗位不存在");
         }
 
         List<Long> referencedIds = TenantContextHolder.runWithTenant(
                 tenantId,
-                () -> sysUserPostMapper.selectReferencedPostIds(tenantId, idList)
+                () -> sysUserPostMapper.selectReferencedPostIds(tenantId, sortedIds)
         );
         if (!CollectionUtils.isEmpty(referencedIds)) {
             Map<Long, String> nameMap = new HashMap<>(existingPosts.size());
@@ -242,18 +245,30 @@ public class SysPostService {
             );
         }
 
-        TenantContextHolder.runWithTenant(tenantId, () -> sysPostMapper.deleteByIds(idList));
+        TenantContextHolder.runWithTenant(tenantId, () -> sysPostMapper.deleteByIds(sortedIds));
     }
 
     private SysPost requirePost(Long tenantId, Long id) {
+        return findPost(tenantId, id, false);
+    }
+
+    private SysPost requirePostForUpdate(Long tenantId, Long id) {
+        return findPost(tenantId, id, true);
+    }
+
+    private SysPost findPost(Long tenantId, Long id, boolean forUpdate) {
         if (id == null || id <= 0L) {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "目标岗位不存在");
         }
-        SysPost post = TenantContextHolder.runWithTenant(tenantId, () -> sysPostMapper.selectOne(
-                Wrappers.<SysPost>lambdaQuery()
-                        .eq(SysPost::getTenantId, tenantId)
-                        .eq(SysPost::getId, id)
-        ));
+        SysPost post = TenantContextHolder.runWithTenant(tenantId, () -> {
+            LambdaQueryWrapper<SysPost> query = Wrappers.<SysPost>lambdaQuery()
+                    .eq(SysPost::getTenantId, tenantId)
+                    .eq(SysPost::getId, id);
+            if (forUpdate) {
+                PessimisticLockUtil.forUpdate(query);
+            }
+            return sysPostMapper.selectOne(query);
+        });
         if (post == null) {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "目标岗位不存在");
         }

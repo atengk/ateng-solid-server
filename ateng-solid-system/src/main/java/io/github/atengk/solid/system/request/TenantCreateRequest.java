@@ -81,5 +81,6 @@ public class TenantCreateRequest {
      * 默认租户管理员初始密码（须满足 8~20 位无空白且至少含 3 类字符）
      */
     @NotBlank(message = "租户管理员初始密码不能为空")
+    @Size(max = 128, message = "租户管理员初始密码长度不能超过 128 个字符")
     private String adminPassword;
 }

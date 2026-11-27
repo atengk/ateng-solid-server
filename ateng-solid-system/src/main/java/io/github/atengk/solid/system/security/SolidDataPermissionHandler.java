@@ -18,6 +18,7 @@ import io.github.atengk.solid.system.mapper.SysRoleDeptMapper;
 import io.github.atengk.solid.system.mapper.SysUserMapper;
 import io.github.atengk.solid.system.mapper.SysUserRoleMapper;
 import io.github.atengk.solid.system.properties.SolidSystemProperties;
+import io.github.atengk.solid.system.support.SystemContextSupport;
 import lombok.RequiredArgsConstructor;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.LongValue;
@@ -251,7 +252,7 @@ public class SolidDataPermissionHandler implements DataPermissionHandler {
                         .select(SysDept::getId)
                         .eq(SysDept::getTenantId, tenantId)
                         .and(w -> w.eq(SysDept::getAncestors, prefix)
-                                .or().likeRight(SysDept::getAncestors, prefix + ","))
+                                .or(nested -> SystemContextSupport.applyPrefixLike(nested, SysDept::getAncestors, prefix + ",")))
         );
         if (CollectionUtils.isEmpty(treeDepts)) {
             return;

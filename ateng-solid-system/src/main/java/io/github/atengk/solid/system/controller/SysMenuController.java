@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckPermission;
 import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.idempotent.annotation.Idempotent;
 import io.github.atengk.solid.system.request.MenuQueryRequest;
 import io.github.atengk.solid.system.request.MenuSaveRequest;
 import io.github.atengk.solid.system.request.StatusUpdateRequest;
@@ -44,7 +45,7 @@ public class SysMenuController {
      */
     @SaCheckPermission("system:menu:list")
     @GetMapping("/tree")
-    public Result<List<MenuTreeVO>> tree(MenuQueryRequest query) {
+    public Result<List<MenuTreeVO>> tree(@Valid MenuQueryRequest query) {
         return Result.success(sysMenuService.listMenuTree(query));
     }
 
@@ -67,6 +68,7 @@ public class SysMenuController {
      * @return 新建菜单主键
      */
     @SaCheckPermission("system:menu:create")
+    @Idempotent
     @OperateLog(module = "菜单管理", type = OperateTypeEnum.INSERT, description = "新增菜单")
     @PostMapping
     public Result<Long> create(@Valid @RequestBody MenuSaveRequest request) {

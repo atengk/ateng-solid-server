@@ -6,6 +6,7 @@ import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.idempotent.annotation.Idempotent;
 import io.github.atengk.boot.web.ratelimit.annotation.LimitType;
 import io.github.atengk.boot.web.ratelimit.annotation.RateLimiter;
 import io.github.atengk.solid.system.request.StatusUpdateRequest;
@@ -90,6 +91,7 @@ public class SysUserController {
      * @return 新建用户主键
      */
     @SaCheckPermission("system:user:create")
+    @Idempotent
     @OperateLog(module = "用户管理", type = OperateTypeEnum.INSERT, description = "新增用户", saveParams = false)
     @PostMapping
     public Result<Long> create(@Valid @RequestBody UserCreateRequest request) {
@@ -141,7 +143,7 @@ public class SysUserController {
     @PutMapping("/{id}/reset-password")
     public Result<Void> resetPassword(
             @PathVariable Long id,
-            @RequestBody(required = false) UserResetPasswordRequest request
+            @Valid @RequestBody(required = false) UserResetPasswordRequest request
     ) {
         sysUserService.resetPassword(id, request);
         return Result.success();

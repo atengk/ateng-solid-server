@@ -67,14 +67,13 @@ public class SysTenantPackageQueryService {
         Page<SysTenantPackage> pageRequest = PageUtil.toPage(
                 safeQuery, SysTenantPackage.class, true, SystemContextSupport.DEFAULT_MAX_PAGE_SIZE
         );
-        String packageName = SystemContextSupport.trimToNull(safeQuery.getPackageName());
         Integer status = safeQuery.getStatus();
 
         Page<SysTenantPackage> resultPage = TenantContextHolder.runWithoutTenant(() -> {
             LambdaQueryWrapper<SysTenantPackage> wrapper = Wrappers.<SysTenantPackage>lambdaQuery()
-                    .like(packageName != null, SysTenantPackage::getPackageName, packageName)
                     .eq(status != null, SysTenantPackage::getStatus, status);
-            if (CollectionUtils.isEmpty(safeQuery.getSorts())) {
+            SystemContextSupport.applyContainsLike(wrapper, SysTenantPackage::getPackageName, safeQuery.getPackageName());
+            if (CollectionUtils.isEmpty(pageRequest.orders())) {
                 wrapper.orderByDesc(SysTenantPackage::getCreateTime).orderByDesc(SysTenantPackage::getId);
             }
             return sysTenantPackageMapper.selectPage(pageRequest, wrapper);

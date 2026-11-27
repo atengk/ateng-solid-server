@@ -127,6 +127,10 @@ ateng:
         enabled: true
         key-prefix: "${SOLID_REDIS_KEY_PREFIX:solid:}rate_limit:"
         fail-open: true
+      idempotent:
+        enabled: true
+        key-prefix: "${SOLID_REDIS_KEY_PREFIX:solid:}idempotent:"
+        fail-open: true
     async:
       wait-for-tasks-to-complete-on-shutdown: true
       await-termination: 30s
@@ -135,7 +139,7 @@ ateng:
           mode: platform
           core-pool-size: 4
           max-pool-size: 6
-          queue-capacity: 64
+          queue-capacity: 1000
           wait-for-tasks-to-complete-on-shutdown: true
           await-termination: 30s
     redis:

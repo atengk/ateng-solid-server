@@ -8,6 +8,7 @@ import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.satoken.util.LoginHelper;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.idempotent.annotation.Idempotent;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.system.request.ConfigQueryRequest;
 import io.github.atengk.solid.system.request.ConfigSaveRequest;
@@ -85,6 +86,7 @@ public class SysConfigController {
      * @return 新建参数主键
      */
     @SaCheckPermission("system:config:create")
+    @Idempotent
     @OperateLog(module = "系统参数", type = OperateTypeEnum.INSERT, description = "新增系统参数", excludeParams = {"configValue"})
     @PostMapping
     public Result<Long> create(@Valid @RequestBody ConfigSaveRequest request) {

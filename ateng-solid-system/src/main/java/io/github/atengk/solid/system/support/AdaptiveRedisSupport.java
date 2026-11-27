@@ -1,6 +1,8 @@
 package io.github.atengk.solid.system.support;
 
+import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.concurrent.ConcurrentLruCache;
+import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.exception.IdempotentException;
 import io.github.atengk.boot.redis.cache.spi.TwoLevelCache;
 import io.github.atengk.boot.redis.cache.template.RedisCacheTemplate;
@@ -20,9 +22,11 @@ import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 /**
@@ -45,12 +49,22 @@ public class AdaptiveRedisSupport {
 
     private static final String REDIS_ENABLED_KEY = "ateng.boot.redis.enabled";
     private static final Duration DEFAULT_LOCK_WAIT_TIME = Duration.ofSeconds(5);
+    private static final int LOCAL_LOCK_STRIPES = 64;
 
     private final ObjectProvider<Environment> environmentProvider;
     private final ObjectProvider<TwoLevelCacheManager> twoLevelCacheManagerProvider;
     private final ObjectProvider<RedisCacheTemplate> redisCacheTemplateProvider;
     private final ObjectProvider<DistributedLockTemplate> distributedLockTemplateProvider;
     private final ObjectProvider<RedisIdempotentTemplate> redisIdempotentTemplateProvider;
+    private final ReentrantLock[] localLockStripes = createLocalLockStripes();
+
+    private static ReentrantLock[] createLocalLockStripes() {
+        ReentrantLock[] stripes = new ReentrantLock[LOCAL_LOCK_STRIPES];
+        for (int i = 0; i < LOCAL_LOCK_STRIPES; i++) {
+            stripes[i] = new ReentrantLock();
+        }
+        return stripes;
+    }
 
     /**
      * 判断当前运行环境是否处于 Redis 启用状态（未显式关闭 {@code ateng.boot.redis.enabled}）。
@@ -109,8 +123,10 @@ public class AdaptiveRedisSupport {
         try {
             T cached = twoLevelCache.get(key, valueType);
             if (cached != null) {
+                localFallback.remove(key);
                 return cached;
             }
+            localFallback.remove(key);
         } catch (RuntimeException readEx) {
             if (isConnectivityFailure(readEx)) {
                 log.warn("读取两级缓存连接或超时异常，跳过远程驱逐直接降级本地有界缓存: space={}, key={}", cacheSpace, key, readEx);
@@ -120,6 +136,7 @@ public class AdaptiveRedisSupport {
             if (!evictTwoLevelSafely(twoLevelCache, cacheSpace, key)) {
                 return localFallback.computeIfAbsent(key, k -> loader.get());
             }
+            localFallback.remove(key);
         }
 
         // 业务回源与缓存回写解耦，防止数据库或业务异常被误判为 Redis 故障触发二次重复加载
@@ -173,6 +190,31 @@ public class AdaptiveRedisSupport {
             Duration ttl,
             Supplier<T> localFallbackLoader
     ) {
+        return getOrLoadL2(key, valueType, loader, ttl, null, localFallbackLoader);
+    }
+
+    /**
+     * 优先通过 {@link RedisCacheTemplate} 读取或加载纯 L2 分布式缓存（Redisson 互斥防击穿、空值哨兵与 Jitter TTL）；
+     * 当 Redis 成功命中或刷新后同步触发 {@code localEvictOnRedisSuccess} 清理本地降级陈旧条目，
+     * Redis 未启用或故障时平滑执行 {@code localFallbackLoader} 降级至本地有界缓存。
+     *
+     * @param key                      受 {@code ateng.boot.redis.key-prefix} 托管的领域相对缓存键
+     * @param valueType                期望反序列化载荷类型
+     * @param loader                   未命中时的回源加载器
+     * @param ttl                      期望写入的分布式缓存过期时间
+     * @param localEvictOnRedisSuccess Redis 正常读取/刷新成功后的本地降级条目清理回调（可空）
+     * @param localFallbackLoader      Redis 不可用时的本地有界缓存读取/回源闭包
+     * @param <T>                      载荷类型
+     * @return 命中或回源加载的结果对象（未查到返回 {@code null}）
+     */
+    public <T> T getOrLoadL2(
+            String key,
+            Class<T> valueType,
+            Supplier<T> loader,
+            Duration ttl,
+            Runnable localEvictOnRedisSuccess,
+            Supplier<T> localFallbackLoader
+    ) {
         if (!StringUtils.hasText(key)) {
             return null;
         }
@@ -188,7 +230,7 @@ public class AdaptiveRedisSupport {
         // 区分回源业务异常与 Redis/反序列化故障，防止业务异常被吞没并触发本地二次回源
         AtomicReference<RuntimeException> loaderFailure = new AtomicReference<>();
         try {
-            return template.getOrLoad(
+            T loaded = template.getOrLoad(
                     key,
                     valueType,
                     k -> {
@@ -202,6 +244,10 @@ public class AdaptiveRedisSupport {
                     ttl,
                     null
             );
+            if (localEvictOnRedisSuccess != null) {
+                localEvictOnRedisSuccess.run();
+            }
+            return loaded;
         } catch (RuntimeException redisEx) {
             if (loaderFailure.get() != null) {
                 throw loaderFailure.get();
@@ -237,7 +283,7 @@ public class AdaptiveRedisSupport {
 
     /**
      * 通过 {@link DistributedLockTemplate} 争用分布式锁并受管执行任务（自动看门狗续期）；
-     * Redis 未启用或锁模板故障时平滑降级直通执行（依靠数据库约束兜底）。
+     * Redis 未启用或锁模板故障时平滑降级进程内 64 槽分段 {@link ReentrantLock} 互斥执行。
      *
      * @param lockKey  受 {@code ateng.boot.redis.key-prefix} 托管的相对分布式锁键
      * @param waitTime 最长等待获取锁时长（空或负值时回落 {@code 5s}）
@@ -246,13 +292,12 @@ public class AdaptiveRedisSupport {
      */
     public boolean tryExecuteWithLock(String lockKey, Duration waitTime, Runnable action) {
         Objects.requireNonNull(action, "action 不能为空");
+        Duration effectiveWait = resolveLockWaitTime(waitTime);
         DistributedLockTemplate lockTemplate = resolveActive(distributedLockTemplateProvider);
         if (lockTemplate == null || !StringUtils.hasText(lockKey)) {
-            action.run();
-            return true;
+            return tryExecuteWithLocalLock(lockKey, effectiveWait, action);
         }
 
-        Duration effectiveWait = resolveLockWaitTime(waitTime);
         AtomicBoolean actionInvoked = new AtomicBoolean(false);
         AtomicReference<RuntimeException> actionFailure = new AtomicReference<>();
         try {
@@ -262,10 +307,72 @@ public class AdaptiveRedisSupport {
             if (Thread.currentThread().isInterrupted()) {
                 throw lockEx;
             }
-            log.warn("DistributedLockTemplate 加锁失败，降级直通执行: lockKey={}", lockKey, lockEx);
+            log.warn("DistributedLockTemplate 加锁失败，降级本地分段互斥锁执行: lockKey={}", lockKey, lockEx);
+            return tryExecuteWithLocalLock(lockKey, effectiveWait, action);
+        }
+    }
+
+    /**
+     * 争用互斥锁执行写操作（Redis 开启走分布式锁，关闭或故障走本地 64 槽分段 {@link ReentrantLock}）；
+     * 等待超时未能抢到锁时直接抛出 429 业务异常中止并发写操作。
+     *
+     * @param lockKey  受 {@code ateng.boot.redis.key-prefix} 托管的相对锁键（非空）
+     * @param waitTime 最长等待获取锁时长（空或负值时回落 {@code 5s}）
+     * @param action   持锁执行的业务逻辑
+     */
+    public void executeWithMutexLock(String lockKey, Duration waitTime, Runnable action) {
+        if (!StringUtils.hasText(lockKey)) {
+            throw new IllegalArgumentException("lockKey 不能为空");
+        }
+        if (!tryExecuteWithLock(lockKey, waitTime, action)) {
+            throw new BusinessException(CommonResultCode.TOO_MANY_REQUESTS, "操作正在处理中，请稍后重试");
+        }
+    }
+
+    /**
+     * 争用互斥锁执行有返回值的写操作（Redis 开启走分布式锁，关闭或故障走本地 64 槽分段 {@link ReentrantLock}）；
+     * 等待超时未能抢到锁时直接抛出 429 业务异常中止并发写操作。
+     *
+     * @param lockKey  受 {@code ateng.boot.redis.key-prefix} 托管的相对锁键（非空）
+     * @param waitTime 最长等待获取锁时长（空或负值时回落 {@code 5s}）
+     * @param action   持锁执行的业务逻辑闭包
+     * @param <T>      返回值类型
+     * @return 业务逻辑返回值
+     */
+    public <T> T supplyWithMutexLock(String lockKey, Duration waitTime, Supplier<T> action) {
+        Objects.requireNonNull(action, "action 不能为空");
+        AtomicReference<T> resultRef = new AtomicReference<>();
+        executeWithMutexLock(lockKey, waitTime, () -> resultRef.set(action.get()));
+        return resultRef.get();
+    }
+
+    private boolean tryExecuteWithLocalLock(String lockKey, Duration waitTime, Runnable action) {
+        if (!StringUtils.hasText(lockKey)) {
             action.run();
             return true;
         }
+        ReentrantLock stripe = localLockStripes[resolveLocalStripeIndex(lockKey)];
+        boolean acquired;
+        try {
+            acquired = stripe.tryLock(waitTime.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(CommonResultCode.SERVICE_UNAVAILABLE, "并发互斥锁等待被中断", ex);
+        }
+        if (!acquired) {
+            return false;
+        }
+        try {
+            action.run();
+            return true;
+        } finally {
+            stripe.unlock();
+        }
+    }
+
+    private static int resolveLocalStripeIndex(String lockKey) {
+        int h = lockKey.hashCode();
+        return (h ^ (h >>> 16)) & (LOCAL_LOCK_STRIPES - 1);
     }
 
     /**
@@ -319,7 +426,7 @@ public class AdaptiveRedisSupport {
 
         RedisIdempotentTemplate template = resolveActive(redisIdempotentTemplateProvider);
         if (template == null) {
-            return executeIdempotentLocally(key, action, localDedupFallback);
+            return executeIdempotentLocally(key, deleteOnFailure, action, localDedupFallback);
         }
 
         AtomicBoolean actionInvoked = new AtomicBoolean(false);
@@ -336,7 +443,7 @@ public class AdaptiveRedisSupport {
         } catch (RuntimeException redisEx) {
             rethrowIfActionAlreadyEntered(actionInvoked, actionFailure, redisEx);
             log.warn("RedisIdempotentTemplate 抢占异常，降级使用本地有界去重表执行: key={}", key, redisEx);
-            return executeIdempotentLocally(key, action, localDedupFallback);
+            return executeIdempotentLocally(key, deleteOnFailure, action, localDedupFallback);
         }
     }
 
@@ -369,6 +476,7 @@ public class AdaptiveRedisSupport {
 
     private static boolean executeIdempotentLocally(
             String key,
+            boolean deleteOnFailure,
             Runnable action,
             ConcurrentLruCache<String, Boolean> localDedupFallback
     ) {
@@ -384,7 +492,9 @@ public class AdaptiveRedisSupport {
             action.run();
             return true;
         } catch (RuntimeException ex) {
-            localDedupFallback.remove(key);
+            if (deleteOnFailure) {
+                localDedupFallback.remove(key);
+            }
             throw ex;
         }
     }
@@ -442,6 +552,7 @@ public class AdaptiveRedisSupport {
             } else {
                 twoLevelCache.put(key, loaded);
             }
+            localFallback.remove(key);
         } catch (RuntimeException writeEx) {
             log.warn("回写两级缓存失败，降级写入本地有界缓存: space={}, key={}", cacheSpace, key, writeEx);
             localFallback.put(key, loaded);

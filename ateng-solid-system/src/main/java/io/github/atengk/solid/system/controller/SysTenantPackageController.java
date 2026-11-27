@@ -6,6 +6,7 @@ import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.idempotent.annotation.Idempotent;
 import io.github.atengk.solid.system.request.StatusUpdateRequest;
 import io.github.atengk.solid.system.request.TenantPackageQueryRequest;
 import io.github.atengk.solid.system.request.TenantPackageSaveRequest;
@@ -102,6 +103,7 @@ public class SysTenantPackageController {
      * @return 新建套餐主键
      */
     @SaCheckPermission("system:tenant-package:create")
+    @Idempotent
     @OperateLog(module = "租户套餐", type = OperateTypeEnum.INSERT, description = "新增租户套餐")
     @PostMapping
     public Result<Long> create(@Valid @RequestBody TenantPackageSaveRequest request) {

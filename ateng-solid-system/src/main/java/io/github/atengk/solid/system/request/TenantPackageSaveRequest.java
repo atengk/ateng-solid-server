@@ -3,6 +3,8 @@ package io.github.atengk.solid.system.request;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -50,5 +52,6 @@ public class TenantPackageSaveRequest {
     /**
      * 套餐包含的菜单与按钮主键列表
      */
-    private List<Long> menuIds;
+    @Size(max = 2000, message = "套餐菜单数量不能超过 2000 个")
+    private List<@NotNull(message = "菜单主键不能为空") @Positive(message = "菜单主键必须为正整数") Long> menuIds;
 }

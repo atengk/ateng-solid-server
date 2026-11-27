@@ -72,6 +72,7 @@ public class SysUserQueryService {
     public PageResult<UserVO> pageUsers(UserQueryRequest query) {
         Long tenantId = contextSupport.requireEffectiveTenantId();
         UserQueryRequest safeQuery = query != null ? query : new UserQueryRequest();
+        SystemContextSupport.assertValidTimeRange(safeQuery.getBeginTime(), safeQuery.getEndTime());
         Page<SysUser> pageRequest = PageUtil.toPage(
                 safeQuery, SysUser.class, true, SystemContextSupport.DEFAULT_MAX_PAGE_SIZE
         );
@@ -79,7 +80,7 @@ public class SysUserQueryService {
         List<Long> deptSubtreeIds = resolveDeptSubtreeIds(tenantId, safeQuery.getDeptId());
         UserQueryCriteria criteria = new UserQueryCriteria(
                 tenantId,
-                SystemContextSupport.trimToNull(safeQuery.getUsername()),
+                SystemContextSupport.escapeLikePattern(safeQuery.getUsername()),
                 ContactFieldCrypto.encryptPhoneForQuery(safeQuery.getPhone()),
                 safeQuery.getStatus(),
                 deptSubtreeIds,
@@ -124,7 +125,7 @@ public class SysUserQueryService {
      */
     public List<UserOptionVO> listActiveUserOptions(String keyword) {
         Long tenantId = contextSupport.requireEffectiveTenantId();
-        String trimmedKeyword = SystemContextSupport.trimToNull(keyword);
+        String trimmedKeyword = SystemContextSupport.escapeLikePattern(keyword);
         Page<SysUser> page = TenantContextHolder.runWithTenant(tenantId, () -> sysUserMapper.selectActiveUserOptionsWithDataScope(
                 new Page<>(1, 200, false),
                 tenantId,
@@ -316,7 +317,24 @@ public class SysUserQueryService {
     }
 
     /**
-     * 按页拉取受 5 级 {@code @DataScope} 数据权限约束的用户流式导出视图切片。
+     * 在打开流式导出响应前统计受 5 级 {@code @DataScope} 数据权限约束的目标导出用户总数。
+     *
+     * @param tenantId       当前生效工作租户主键
+     * @param request        导出筛选条件（可选）
+     * @param deptSubtreeIds 预解析后的部门子树主键集合
+     * @return 受权可导出的用户总记录数
+     */
+    public long countUsersForExport(Long tenantId, UserExportRequest request, List<Long> deptSubtreeIds) {
+        UserExportRequest safeRequest = request != null ? request : new UserExportRequest();
+        UserQueryCriteria criteria = buildExportCriteria(tenantId, safeRequest, deptSubtreeIds, false);
+        return TenantContextHolder.runWithTenant(
+                tenantId,
+                () -> sysUserMapper.countUsersWithDataScope(criteria)
+        );
+    }
+
+    /**
+     * 按页拉取受 5 级 {@code @DataScope} 数据权限约束的用户流式导出视图切片（自动解析部门子树）。
      *
      * @param tenantId          当前生效工作租户主键
      * @param request           导出筛选条件（支持勾选 {@code ids} 或筛选条件组合）
@@ -333,23 +351,36 @@ public class SysUserQueryService {
             Map<String, String> genderCodeToLabel
     ) {
         UserExportRequest safeRequest = request != null ? request : new UserExportRequest();
-        int effectiveSize = Math.min(Math.max(1, pageSize), 1000);
-        Page<SysUser> pageRequest = new Page<>(Math.max(1, pageNum), effectiveSize);
-
         List<Long> deptSubtreeIds = CollectionUtils.isEmpty(safeRequest.getIds())
                 ? resolveDeptSubtreeIds(tenantId, safeRequest.getDeptId())
                 : Collections.emptyList();
-        UserQueryCriteria criteria = new UserQueryCriteria(
-                tenantId,
-                SystemContextSupport.trimToNull(safeRequest.getUsername()),
-                ContactFieldCrypto.encryptPhoneForQuery(safeRequest.getPhone()),
-                safeRequest.getStatus(),
-                deptSubtreeIds,
-                safeRequest.getIds(),
-                safeRequest.getBeginTime(),
-                safeRequest.getEndTime(),
-                true
-        );
+        return pageUsersForExport(tenantId, safeRequest, deptSubtreeIds, pageNum, pageSize, genderCodeToLabel);
+    }
+
+    /**
+     * 按页拉取受 5 级 {@code @DataScope} 数据权限约束的用户流式导出视图切片（复用导出准备期预解析部门子树）。
+     *
+     * @param tenantId          当前生效工作租户主键
+     * @param request           导出筛选条件（支持勾选 {@code ids} 或筛选条件组合）
+     * @param deptSubtreeIds    导出准备阶段预缓存的部门子树主键集合
+     * @param pageNum           当前页码（1-based）
+     * @param pageSize          每页流式批量拉取大小
+     * @param genderCodeToLabel 性别字典编码到展示文本映射
+     * @return 受权用户导出分页切片
+     */
+    public PageResult<UserExportVO> pageUsersForExport(
+            Long tenantId,
+            UserExportRequest request,
+            List<Long> deptSubtreeIds,
+            int pageNum,
+            int pageSize,
+            Map<String, String> genderCodeToLabel
+    ) {
+        UserExportRequest safeRequest = request != null ? request : new UserExportRequest();
+        int effectiveSize = Math.min(Math.max(1, pageSize), 1000);
+        Page<SysUser> pageRequest = new Page<>(Math.max(1, pageNum), effectiveSize);
+
+        UserQueryCriteria criteria = buildExportCriteria(tenantId, safeRequest, deptSubtreeIds, true);
 
         Page<SysUser> resultPage = TenantContextHolder.runWithTenant(
                 tenantId,
@@ -366,6 +397,28 @@ public class SysUserQueryService {
                 user.getDeptId() != null ? deptNameMap.get(user.getDeptId()) : null,
                 genderCodeToLabel
         ));
+    }
+
+    private UserQueryCriteria buildExportCriteria(
+            Long tenantId,
+            UserExportRequest safeRequest,
+            List<Long> deptSubtreeIds,
+            boolean defaultOrder
+    ) {
+        List<Long> resolvedDeptIds = CollectionUtils.isEmpty(safeRequest.getIds())
+                ? SystemContextSupport.safeList(deptSubtreeIds)
+                : Collections.emptyList();
+        return new UserQueryCriteria(
+                tenantId,
+                SystemContextSupport.escapeLikePattern(safeRequest.getUsername()),
+                ContactFieldCrypto.encryptPhoneForQuery(safeRequest.getPhone()),
+                safeRequest.getStatus(),
+                resolvedDeptIds,
+                safeRequest.getIds(),
+                safeRequest.getBeginTime(),
+                safeRequest.getEndTime(),
+                defaultOrder
+        );
     }
 
     private UserVO toUserVO(SysUser user, String deptName, boolean builtinSuperAdmin) {

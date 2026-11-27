@@ -31,6 +31,7 @@ import io.github.atengk.solid.system.vo.ImportErrorVO;
 import io.github.atengk.solid.system.vo.ImportResultVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.io.ByteArrayInputStream;
@@ -38,6 +39,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -66,8 +68,18 @@ public class SysUserExcelService {
      */
     public static final int MAX_IMPORT_FILE_BYTES = 2 * 1024 * 1024;
 
+    /**
+     * 单次流式导出总行数硬上限
+     */
+    public static final long MAX_EXPORT_ROWS = 50_000L;
+
     private static final int DEFAULT_IMPORT_MAX_ROWS = 500;
     private static final long HASH_TIMEOUT_SECONDS = 90L;
+    private static final String DEFAULT_FEEDBACK_STEM = "用户导入";
+    private static final String FEEDBACK_SUFFIX = "_错误批注.xlsx";
+    private static final int MAX_FEEDBACK_FILENAME_LENGTH = 64;
+    private static final java.util.regex.Pattern CONTROL_CHAR_PATTERN = java.util.regex.Pattern.compile("\\p{Cntrl}+");
+    private static final java.util.regex.Pattern UNSAFE_FILENAME_CHAR_PATTERN = java.util.regex.Pattern.compile("[\\\\/:*?\"<>|;'%&=#,]+");
 
     private final SystemContextSupport contextSupport;
     private final SolidSystemProperties systemProperties;
@@ -78,6 +90,7 @@ public class SysUserExcelService {
     private final UserImportSemaphoreCoordinator userImportSemaphoreCoordinator;
     private final SolidDataPermissionHandler dataPermissionHandler;
     private final RbacPrivilegeGuard rbacPrivilegeGuard;
+    private final SysUserQueryService sysUserQueryService;
 
     /**
      * 执行三段式 500 行用户 Excel 整批原子导入。
@@ -135,20 +148,56 @@ public class SysUserExcelService {
     }
 
     /**
-     * 在导出流输出启动前解析并校验当前请求租户、筛选项及性别字典映射。
+     * 在导出流输出启动前解析并校验当前请求租户、预解析部门子树、导出总条数上限及性别字典映射。
      *
      * @param request 导出筛选条件
      * @return 只读导出上下文快照
      */
     public ExportContext prepareExportContext(UserExportRequest request) {
+        return prepareExportContext(request, MAX_EXPORT_ROWS);
+    }
+
+    ExportContext prepareExportContext(UserExportRequest request, long maxExportRows) {
         Long tenantId = contextSupport.requireEffectiveTenantId();
-        UserExportRequest safeRequest = request != null ? request : new UserExportRequest();
-        if (safeRequest.getBeginTime() != null && safeRequest.getEndTime() != null
-                && safeRequest.getBeginTime().isAfter(safeRequest.getEndTime())) {
-            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "创建时间起止范围不合法");
+        UserExportRequest safeRequest = normalizeExportRequest(request);
+        SystemContextSupport.assertValidTimeRange(safeRequest.getBeginTime(), safeRequest.getEndTime());
+
+        List<Long> deptSubtreeIds = CollectionUtils.isEmpty(safeRequest.getIds())
+                ? sysUserQueryService.resolveDeptSubtreeIds(tenantId, safeRequest.getDeptId())
+                : Collections.emptyList();
+        long totalRows = sysUserQueryService.countUsersForExport(tenantId, safeRequest, deptSubtreeIds);
+        if (totalRows > maxExportRows) {
+            throw new BusinessException(
+                    CommonBizResultCode.PARAM_INVALID,
+                    "单次导出数据量（" + totalRows + " 条）超过上限 " + maxExportRows + " 条，请缩小筛选条件后分批导出"
+            );
         }
+
         Map<String, String> genderMap = userContactAndDictSupport.loadGenderDictionary().codeToLabel();
-        return new ExportContext(tenantId, safeRequest, genderMap);
+        return new ExportContext(tenantId, safeRequest, Collections.unmodifiableList(deptSubtreeIds), genderMap);
+    }
+
+    private static UserExportRequest normalizeExportRequest(UserExportRequest request) {
+        UserExportRequest copy = new UserExportRequest();
+        if (request == null) {
+            return copy;
+        }
+        copy.setUsername(request.getUsername());
+        copy.setPhone(request.getPhone());
+        copy.setStatus(request.getStatus());
+        copy.setDeptId(request.getDeptId());
+        copy.setBeginTime(request.getBeginTime());
+        copy.setEndTime(request.getEndTime());
+        if (!CollectionUtils.isEmpty(request.getIds())) {
+            LinkedHashSet<Long> cleanedIds = new LinkedHashSet<>(request.getIds().size());
+            for (Long id : request.getIds()) {
+                if (id != null && id > 0) {
+                    cleanedIds.add(id);
+                }
+            }
+            copy.setIds(List.copyOf(cleanedIds));
+        }
+        return copy;
     }
 
     private ExcelReadResult<UserImportDTO> parseExcelSafely(byte[] fileBytes, int importMaxRows) {
@@ -229,21 +278,53 @@ public class SysUserExcelService {
     }
 
     private List<PreparedImportUser> executeParallelHashTasks(List<ValidatedImportRow> rows, String initPassword) {
+        List<CompletableFuture<String>> futures = new ArrayList<>(rows.size());
         try {
-            List<CompletableFuture<String>> futures = new ArrayList<>(rows.size());
             for (int i = 0; i < rows.size(); i++) {
                 futures.add(AsyncUtil.supply(
                         SolidConstants.PASSWORD_HASH_POOL_NAME,
                         () -> PasswordUtil.hash(initPassword)
                 ));
             }
-            CompletableFuture<Void> allFuture = CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
-            allFuture.get(HASH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return awaitHashTasks(rows, futures, HASH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } finally {
+            cancelIncompleteFutures(futures);
+        }
+    }
+
+    static List<PreparedImportUser> awaitHashTasks(
+            List<ValidatedImportRow> rows,
+            List<CompletableFuture<String>> futures,
+            long timeout,
+            TimeUnit unit
+    ) {
+        if (rows.isEmpty()) {
+            return Collections.emptyList();
+        }
+        boolean allCompleted = false;
+        try {
+            CompletableFuture<Void> coordinator = new CompletableFuture<>();
+            java.util.concurrent.atomic.AtomicInteger remaining = new java.util.concurrent.atomic.AtomicInteger(futures.size());
+            for (CompletableFuture<String> future : futures) {
+                future.whenComplete((res, ex) -> {
+                    if (ex != null) {
+                        if (coordinator.completeExceptionally(ex)) {
+                            cancelIncompleteFutures(futures);
+                        }
+                        return;
+                    }
+                    if (remaining.decrementAndGet() == 0) {
+                        coordinator.complete(null);
+                    }
+                });
+            }
+            coordinator.get(timeout, unit);
 
             List<PreparedImportUser> prepared = new ArrayList<>(rows.size());
             for (int i = 0; i < rows.size(); i++) {
                 prepared.add(new PreparedImportUser(rows.get(i), futures.get(i).join()));
             }
+            allCompleted = true;
             return prepared;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
@@ -251,11 +332,34 @@ public class SysUserExcelService {
         } catch (TimeoutException ex) {
             throw new BusinessException(CommonResultCode.SERVICE_UNAVAILABLE, "批量导入密码加密超时，请拆分更小批次重试", ex);
         } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
+            Throwable cause = unwrapExecutionCause(ex);
             if (cause instanceof BusinessException bizEx) {
                 throw bizEx;
             }
             throw new BusinessException(CommonResultCode.INTERNAL_SERVER_ERROR, "批量导入密码加密计算失败", cause);
+        } finally {
+            if (!allCompleted) {
+                cancelIncompleteFutures(futures);
+            }
+        }
+    }
+
+    private static Throwable unwrapExecutionCause(Throwable error) {
+        Throwable cursor = error;
+        while (cursor instanceof java.util.concurrent.CompletionException || cursor instanceof ExecutionException) {
+            if (cursor.getCause() == null) {
+                break;
+            }
+            cursor = cursor.getCause();
+        }
+        return cursor;
+    }
+
+    private static void cancelIncompleteFutures(List<CompletableFuture<String>> futures) {
+        for (CompletableFuture<String> future : futures) {
+            if (future != null && !future.isDone()) {
+                future.cancel(true);
+            }
         }
     }
 
@@ -272,17 +376,44 @@ public class SysUserExcelService {
         }
     }
 
-    private static String buildFeedbackFilename(String originalFilename) {
-        String baseName = "用户导入";
+    static String buildFeedbackFilename(String originalFilename) {
+        String baseName = DEFAULT_FEEDBACK_STEM;
         if (StringUtils.hasText(originalFilename)) {
-            String trimmed = originalFilename.trim();
-            int dotIndex = trimmed.lastIndexOf('.');
-            String stem = dotIndex > 0 ? trimmed.substring(0, dotIndex) : trimmed;
+            String noControl = CONTROL_CHAR_PATTERN.matcher(originalFilename).replaceAll("").trim();
+            int lastSlash = Math.max(noControl.lastIndexOf('/'), noControl.lastIndexOf('\\'));
+            String filenameOnly = lastSlash >= 0 ? noControl.substring(lastSlash + 1) : noControl;
+            int dotIndex = filenameOnly.lastIndexOf('.');
+            String stem = dotIndex >= 0 ? filenameOnly.substring(0, dotIndex) : filenameOnly;
+            stem = UNSAFE_FILENAME_CHAR_PATTERN.matcher(stem).replaceAll("");
+            while (stem.contains("..")) {
+                stem = stem.replace("..", "");
+            }
+            stem = trimDotsAndWhitespace(stem);
+            int maxStemLen = MAX_FEEDBACK_FILENAME_LENGTH - FEEDBACK_SUFFIX.length();
+            if (stem.length() > maxStemLen) {
+                int endIndex = maxStemLen;
+                if (Character.isHighSurrogate(stem.charAt(endIndex - 1))) {
+                    endIndex--;
+                }
+                stem = trimDotsAndWhitespace(stem.substring(0, Math.max(0, endIndex)));
+            }
             if (StringUtils.hasText(stem)) {
                 baseName = stem;
             }
         }
-        return baseName + "_错误批注.xlsx";
+        return baseName + FEEDBACK_SUFFIX;
+    }
+
+    private static String trimDotsAndWhitespace(String value) {
+        int start = 0;
+        int end = value.length();
+        while (start < end && (Character.isWhitespace(value.charAt(start)) || value.charAt(start) == '.')) {
+            start++;
+        }
+        while (end > start && (Character.isWhitespace(value.charAt(end - 1)) || value.charAt(end - 1) == '.')) {
+            end--;
+        }
+        return value.substring(start, end);
     }
 
     private int resolveImportMaxRows() {
@@ -296,12 +427,14 @@ public class SysUserExcelService {
      * 用户流式导出上下文快照。
      *
      * @param tenantId          生效工作租户主键
-     * @param request           导出筛选条件
+     * @param request           标准化后的导出筛选条件
+     * @param deptSubtreeIds    导出准备期预解析的部门子树主键集合
      * @param genderCodeToLabel 性别字典编码到展示文本映射
      */
     public record ExportContext(
             Long tenantId,
             UserExportRequest request,
+            List<Long> deptSubtreeIds,
             Map<String, String> genderCodeToLabel
     ) {
     }

@@ -221,21 +221,30 @@ public final class MenuTreeSupport {
         if (roots.isEmpty()) {
             return Collections.emptyList();
         }
+        Set<Long> visited = new HashSet<>(visibleIds.size());
         List<MenuTreeVO> tree = new ArrayList<>(roots.size());
         for (SysMenu root : roots) {
-            tree.add(buildNodeRecursive(root, childrenMap));
+            if (root != null && root.getId() != null && visited.add(root.getId())) {
+                tree.add(buildNodeRecursive(root, childrenMap, visited));
+            }
         }
         return tree;
     }
 
-    private static MenuTreeVO buildNodeRecursive(SysMenu current, Map<Long, List<SysMenu>> childrenMap) {
+    private static MenuTreeVO buildNodeRecursive(
+            SysMenu current,
+            Map<Long, List<SysMenu>> childrenMap,
+            Set<Long> visited
+    ) {
         List<SysMenu> rawChildren = childrenMap.get(current.getId());
         if (CollectionUtils.isEmpty(rawChildren)) {
             return toMenuTreeVO(current, Collections.emptyList());
         }
         List<MenuTreeVO> childVos = new ArrayList<>(rawChildren.size());
         for (SysMenu child : rawChildren) {
-            childVos.add(buildNodeRecursive(child, childrenMap));
+            if (child != null && child.getId() != null && visited.add(child.getId())) {
+                childVos.add(buildNodeRecursive(child, childrenMap, visited));
+            }
         }
         return toMenuTreeVO(current, childVos);
     }

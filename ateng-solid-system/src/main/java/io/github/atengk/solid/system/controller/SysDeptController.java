@@ -5,6 +5,7 @@ import cn.dev33.satoken.annotation.SaCheckPermission;
 import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.idempotent.annotation.Idempotent;
 import io.github.atengk.solid.system.request.DeptQueryRequest;
 import io.github.atengk.solid.system.request.DeptSaveRequest;
 import io.github.atengk.solid.system.request.StatusUpdateRequest;
@@ -47,7 +48,7 @@ public class SysDeptController {
      */
     @SaCheckPermission("system:dept:list")
     @GetMapping("/tree")
-    public Result<List<DeptTreeVO>> tree(DeptQueryRequest query) {
+    public Result<List<DeptTreeVO>> tree(@Valid DeptQueryRequest query) {
         return Result.success(sysDeptQueryService.listTree(query));
     }
 
@@ -81,6 +82,7 @@ public class SysDeptController {
      * @return 新建部门主键
      */
     @SaCheckPermission("system:dept:create")
+    @Idempotent
     @OperateLog(module = "部门管理", type = OperateTypeEnum.INSERT, description = "新增部门", excludeParams = {"phone", "email"})
     @PostMapping
     public Result<Long> create(@Valid @RequestBody DeptSaveRequest request) {

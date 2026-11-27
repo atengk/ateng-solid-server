@@ -57,13 +57,11 @@ public class SysDictQueryService {
                 safeQuery, SysDictType.class, true, SystemContextSupport.DEFAULT_MAX_PAGE_SIZE
         );
 
-        String dictName = SystemContextSupport.trimToNull(safeQuery.getDictName());
-        String dictType = SystemContextSupport.trimToNull(safeQuery.getDictType());
         LambdaQueryWrapper<SysDictType> wrapper = Wrappers.<SysDictType>lambdaQuery()
-                .like(dictName != null, SysDictType::getDictName, dictName)
-                .like(dictType != null, SysDictType::getDictType, dictType)
                 .eq(safeQuery.getStatus() != null, SysDictType::getStatus, safeQuery.getStatus());
-        if (CollectionUtils.isEmpty(safeQuery.getSorts())) {
+        SystemContextSupport.applyContainsLike(wrapper, SysDictType::getDictName, safeQuery.getDictName());
+        SystemContextSupport.applyContainsLike(wrapper, SysDictType::getDictType, safeQuery.getDictType());
+        if (CollectionUtils.isEmpty(pageRequest.orders())) {
             wrapper.orderByAsc(SysDictType::getId);
         }
 
@@ -130,12 +128,11 @@ public class SysDictQueryService {
         );
 
         String dictType = SystemContextSupport.trimToNull(safeQuery.getDictType());
-        String dictLabel = SystemContextSupport.trimToNull(safeQuery.getDictLabel());
         LambdaQueryWrapper<SysDictData> wrapper = Wrappers.<SysDictData>lambdaQuery()
                 .eq(dictType != null, SysDictData::getDictType, dictType)
-                .like(dictLabel != null, SysDictData::getDictLabel, dictLabel)
                 .eq(safeQuery.getStatus() != null, SysDictData::getStatus, safeQuery.getStatus());
-        if (CollectionUtils.isEmpty(safeQuery.getSorts())) {
+        SystemContextSupport.applyContainsLike(wrapper, SysDictData::getDictLabel, safeQuery.getDictLabel());
+        if (CollectionUtils.isEmpty(pageRequest.orders())) {
             wrapper.orderByAsc(SysDictData::getSort).orderByAsc(SysDictData::getId);
         }
 

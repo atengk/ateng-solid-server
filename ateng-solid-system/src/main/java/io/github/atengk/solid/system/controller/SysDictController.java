@@ -6,6 +6,7 @@ import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.idempotent.annotation.Idempotent;
 import io.github.atengk.solid.system.request.DictDataQueryRequest;
 import io.github.atengk.solid.system.request.DictDataSaveRequest;
 import io.github.atengk.solid.system.request.DictTypeQueryRequest;
@@ -86,6 +87,7 @@ public class SysDictController {
      * @return 新建字典类型主键
      */
     @SaCheckPermission("system:dict:create")
+    @Idempotent
     @OperateLog(module = "数据字典", type = OperateTypeEnum.INSERT, description = "新增字典类型")
     @PostMapping("/type")
     public Result<Long> createType(@Valid @RequestBody DictTypeSaveRequest request) {
@@ -181,6 +183,7 @@ public class SysDictController {
      * @return 新建字典数据主键
      */
     @SaCheckPermission("system:dict:create")
+    @Idempotent
     @OperateLog(module = "数据字典", type = OperateTypeEnum.INSERT, description = "新增字典数据")
     @PostMapping("/data")
     public Result<Long> createData(@Valid @RequestBody DictDataSaveRequest request) {

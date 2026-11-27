@@ -8,7 +8,10 @@ import io.github.atengk.solid.system.api.result.SystemResultCode;
 import io.github.atengk.solid.system.entity.SysMenu;
 import io.github.atengk.solid.system.request.MenuSaveRequest;
 
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -22,6 +25,7 @@ import java.util.regex.Pattern;
  */
 public final class MenuValidationSupport {
 
+    public static final int MAX_MENU_DEPTH = 10;
     private static final Pattern PERMS_PATTERN = Pattern.compile("^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*:[a-z][a-z0-9-*]*$");
     private static final Pattern EXTERNAL_URL_PATTERN = Pattern.compile("^https?://.+");
 
@@ -103,6 +107,71 @@ public final class MenuValidationSupport {
                 throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "存在下级按钮权限（F）的菜单节点禁止直接变更为目录（M）");
             }
         }
+    }
+
+    /**
+     * 校验待挂载菜单节点及其子树合并后的总深度不超过 10 层（同时防既有脏环导致无限回溯）。
+     *
+     * @param parentId      目标父菜单主键（0 表示顶级根）
+     * @param nodeId        当前节点主键（新增传 {@code null}）
+     * @param allMenus      全量菜单列表
+     */
+    public static void assertMenuDepthWithinLimit(Long parentId, Long nodeId, List<SysMenu> allMenus) {
+        Map<Long, SysMenu> byId = new HashMap<>(allMenus != null ? allMenus.size() : 16);
+        if (allMenus != null) {
+            for (SysMenu menu : allMenus) {
+                if (menu != null && menu.getId() != null) {
+                    byId.put(menu.getId(), menu);
+                }
+            }
+        }
+        int selfDepth = 1;
+        Long cursorId = parentId;
+        Set<Long> visited = new HashSet<>();
+        while (cursorId != null && cursorId > 0L) {
+            if (!visited.add(cursorId)) {
+                throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "菜单上级链路存在环状异常，操作已阻断");
+            }
+            SysMenu ancestor = byId.get(cursorId);
+            if (ancestor == null) {
+                break;
+            }
+            selfDepth++;
+            if (selfDepth > MAX_MENU_DEPTH) {
+                throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "菜单树层级深度不能超过 10 层");
+            }
+            cursorId = ancestor.getParentId();
+        }
+        if (nodeId != null && allMenus != null) {
+            int subtreeHeight = computeSubtreeHeight(nodeId, MenuTreeSupport.groupByParentId(allMenus), new HashSet<>());
+            if (selfDepth + subtreeHeight > MAX_MENU_DEPTH) {
+                throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "菜单树层级深度不能超过 10 层");
+            }
+        }
+    }
+
+    private static int computeSubtreeHeight(
+            Long currentId,
+            Map<Long, List<SysMenu>> childrenMap,
+            Set<Long> visited
+    ) {
+        if (!visited.add(currentId)) {
+            return 0;
+        }
+        List<SysMenu> children = childrenMap.get(currentId);
+        if (children == null || children.isEmpty()) {
+            return 0;
+        }
+        int maxChildHeight = 0;
+        for (SysMenu child : children) {
+            if (child != null && child.getId() != null && !visited.contains(child.getId())) {
+                int h = 1 + computeSubtreeHeight(child.getId(), childrenMap, visited);
+                if (h > maxChildHeight) {
+                    maxChildHeight = h;
+                }
+            }
+        }
+        return maxChildHeight;
     }
 
     /**

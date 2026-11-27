@@ -11,6 +11,8 @@ import io.github.atengk.boot.redis.properties.RedisProperties;
 import io.github.atengk.boot.satoken.properties.SaTokenProperties;
 import io.github.atengk.boot.storage.properties.StorageProperties;
 import io.github.atengk.boot.web.dict.EnumDictionaryRegistry;
+import io.github.atengk.boot.web.idempotent.aspect.IdempotentAspect;
+import io.github.atengk.boot.web.idempotent.properties.IdempotentProperties;
 import io.github.atengk.boot.web.properties.WebProperties;
 import io.github.atengk.boot.web.ratelimit.aspect.RateLimiterAspect;
 import io.github.atengk.boot.web.ratelimit.properties.RateLimiterProperties;
@@ -88,6 +90,9 @@ class ConfigurationBaselineIntegrationTest {
     @Autowired
     private ObjectProvider<RateLimiterAspect> rateLimiterAspectProvider;
 
+    @Autowired
+    private ObjectProvider<IdempotentAspect> idempotentAspectProvider;
+
     @Test
     @DisplayName("应当正确扫描并绑定 solid 三组按域内聚的 @ConfigurationProperties Bean")
     void shouldBindAllSolidPropertiesBeans() {
@@ -119,7 +124,7 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(hashPool.getMode()).isEqualTo(AsyncExecutionMode.PLATFORM);
         assertThat(hashPool.getCorePoolSize()).isEqualTo(4);
         assertThat(hashPool.getMaxPoolSize()).isEqualTo(6);
-        assertThat(hashPool.getQueueCapacity()).isEqualTo(64);
+        assertThat(hashPool.getQueueCapacity()).isEqualTo(1000);
 
         assertThat(saTokenProperties.getPrimaryLoginType()).isEqualTo("admin");
         assertThat(saTokenProperties.getSuperAdminRoles()).containsExactly("super_admin");
@@ -188,6 +193,14 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(rateLimiterProperties.isIncludeHeaders()).isTrue();
         assertThat(rateLimiterAspectProvider.getIfAvailable()).isNull();
 
+        IdempotentProperties idempotentProperties = Binder.get(environment)
+                .bind("ateng.boot.web.idempotent", IdempotentProperties.class)
+                .get();
+        assertThat(idempotentProperties.isEnabled()).isFalse();
+        assertThat(idempotentProperties.getKeyPrefix()).isEqualTo("solid:idempotent:");
+        assertThat(idempotentProperties.isFailOpen()).isTrue();
+        assertThat(idempotentAspectProvider.getIfAvailable()).isNull();
+
         assertThat(asyncProperties.isWaitForTasksToCompleteOnShutdown()).isTrue();
         assertThat(asyncProperties.getAwaitTermination()).isEqualTo(Duration.ofSeconds(5));
         RedisProperties redisProperties = Binder.get(environment)
@@ -226,10 +239,15 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(base.getProperty("ateng.boot.web.ratelimit.key-prefix"))
                 .isEqualTo("${SOLID_REDIS_KEY_PREFIX:solid:}rate_limit:");
         assertThat(base.getProperty("ateng.boot.web.ratelimit.fail-open")).isEqualTo(true);
+        assertThat(base.getProperty("ateng.boot.web.idempotent.enabled")).isEqualTo(true);
+        assertThat(base.getProperty("ateng.boot.web.idempotent.key-prefix"))
+                .isEqualTo("${SOLID_REDIS_KEY_PREFIX:solid:}idempotent:");
+        assertThat(base.getProperty("ateng.boot.web.idempotent.fail-open")).isEqualTo(true);
 
         List<PropertySource<?>> testSources = loader.load("test", new ClassPathResource("application-test.yml"));
         assertThat(testSources).hasSize(1);
         assertThat(testSources.getFirst().getProperty("ateng.boot.web.ratelimit.enabled")).isEqualTo(false);
+        assertThat(testSources.getFirst().getProperty("ateng.boot.web.idempotent.enabled")).isEqualTo(false);
 
         List<PropertySource<?>> devSources = loader.load("dev", new ClassPathResource("application-dev.yml"));
         assertThat(devSources).hasSize(1);

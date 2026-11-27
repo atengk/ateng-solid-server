@@ -65,17 +65,15 @@ public class SysRoleQueryService {
                 safeQuery, SysRole.class, true, SystemContextSupport.DEFAULT_MAX_PAGE_SIZE
         );
 
-        String roleName = SystemContextSupport.trimToNull(safeQuery.getRoleName());
-        String roleKey = SystemContextSupport.trimToNull(safeQuery.getRoleKey());
         Integer status = safeQuery.getStatus();
 
         Page<SysRole> rolePage = TenantContextHolder.runWithTenant(tenantId, () -> {
             LambdaQueryWrapper<SysRole> wrapper = Wrappers.<SysRole>lambdaQuery()
                     .eq(SysRole::getTenantId, tenantId)
-                    .like(roleName != null, SysRole::getRoleName, roleName)
-                    .like(roleKey != null, SysRole::getRoleKey, roleKey)
                     .eq(status != null, SysRole::getStatus, status);
-            if (CollectionUtils.isEmpty(safeQuery.getSorts())) {
+            SystemContextSupport.applyContainsLike(wrapper, SysRole::getRoleName, safeQuery.getRoleName());
+            SystemContextSupport.applyContainsLike(wrapper, SysRole::getRoleKey, safeQuery.getRoleKey());
+            if (CollectionUtils.isEmpty(pageRequest.orders())) {
                 wrapper.orderByAsc(SysRole::getSort).orderByAsc(SysRole::getId);
             }
             return sysRoleMapper.selectPage(pageRequest, wrapper);

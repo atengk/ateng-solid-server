@@ -3,6 +3,8 @@ package io.github.atengk.solid.system.request;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.util.List;
@@ -32,5 +34,6 @@ public class RoleDataScopeRequest {
     /**
      * 自定部门主键列表（当 dataScope=2 时至少勾选 1 个部门）
      */
-    private List<Long> deptIds;
+    @Size(max = 1000, message = "自定部门数量不能超过 1000 个")
+    private List<@NotNull(message = "部门主键不能为空") @Positive(message = "部门主键必须为正整数") Long> deptIds;
 }

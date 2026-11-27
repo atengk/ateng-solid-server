@@ -36,8 +36,8 @@
 | 个人改密 / 管理员重置密码 | 无 | `LoginHelper.logout("admin", compositeLoginId)` |
 | 编辑角色菜单 / 停用 / 删除角色 | `clearRoleCache("admin", tenantIdStr, roleKey)` | 无 |
 | 修改菜单（`perms`/`status`/`platformOnly`）/ 缩减套餐 | `clearAll()` | 无 |
-| 编辑租户基础状态或过期时间 | 驱逐受 `key-prefix` 托管的 `tenant:status:{tenantId}`（默认 `solid:tenant:status:{tenantId}`） | 无（启用/改期按实时拦截生效） |
-| 停用 / 删除租户 | 驱逐受 `key-prefix` 托管的 `tenant:status:{tenantId}`（默认 `solid:tenant:status:{tenantId}`） | 分页循环 `searchOnlineUserPage("admin", queryByTenant, 1, 100)` 逐批调用 `kickoutByTokenForTenant` 清退该租户全员会话 |
+| 编辑租户基础状态或过期时间 | 驱逐受 `key-prefix` 托管的 `tenant:status:{tenantId}`（默认 `solid:tenant:status:{tenantId}`） | 当新 `expireTime <= LocalDateTime.now()` 时按 500 条游标批扫强退全员会话，否则按实时拦截生效 |
+| 停用 / 删除租户 | 驱逐受 `key-prefix` 托管的 `tenant:status:{tenantId}`（默认 `solid:tenant:status:{tenantId}`） | `executeAfterCommit` 按 `sys_user` 主键游标 500 条分批检索目标租户用户并逐人隔离调用 `LoginHelper.kickoutByLoginType("admin", ...)` 清退全员会话 |
 
 ---
 
@@ -56,7 +56,7 @@
 2. **阶段 2（无事务，有界并行 PBKDF2 哈希）**：
    - 接入 `ateng-boot-redis` **`RedisSemaphoreTemplate`**（名称 `user:import`，受 `ateng.boot.redis.key-prefix` 托管为默认 `solid:semaphore:user:import`，最大并发 `ateng.solid.user.max-concurrent-imports = 2`，等待 `3s` 超时抛出 `429` 提示稍后重试）实施**集群级**导入并发度闸门控制；启动期在 `DistributedLockTemplate` 保护下比对伴随元数据键（`semaphore:user:import:permits`）做增量校准（增大调 `addPermits`，调小才 `resetPermits`，防滚动发布误清在途许可）；无 Redis 时经上层自适应门面平滑降级为进程内 `Semaphore`；
    - 控制器入口附加 `ateng-boot-web` 声明式 `@RateLimiter`：`POST /admin/system/user/import`（User 维度 `5 次 / 60s`）与 `POST /admin/system/user/export`（User 维度 `10 次 / 60s`），`test` Profile 通过 `ateng.boot.web.ratelimit.enabled: false` 隔离；
-   - 投递至独立有界平台线程池 **`ateng.boot.async.pools.password-hash`**（`mode: platform`、`core-size: 4`、`max-size: 6`、`queue-capacity: 64`、**严禁使用虚拟线程执行器**）并行生成 500 个独立随机盐 `PasswordUtil.hash(initPassword)`（**严禁共享同一哈希**），通过 `CompletableFuture.allOf(...).get(90, TimeUnit.SECONDS)` 有界等待汇总；
+   - 投递至独立有界平台线程池 **`ateng.boot.async.pools.password-hash`**（`mode: platform`、`core-size: 4`、`max-size: 6`、`queue-capacity: 1000`、**严禁使用虚拟线程执行器**）并行生成 500 个独立随机盐 `PasswordUtil.hash(initPassword)`（**严禁共享同一哈希**），通过 fail-fast `CompletableFuture` 协调器在 `90s` 内有界等待并在超时、中断或任一任务异常时对全部未完成 `Future` 执行 `cancel(true)` 释放队列；
    - 前端 `POST /admin/system/user/import` 请求 Axios 超时专项放宽至 **`120_000 ms`**。
 3. **阶段 3（极短 `@Transactional(rollbackFor = Exception.class)` `< 100ms`）**：
    - 开启多租户时调用 `PessimisticLockUtil.forUpdate` 锁定 `sys_tenant` 复核配额；
@@ -90,7 +90,7 @@
             .build()).getUrl();
     ```
     （已源码验证 `S3Driver` 与 `LocalDriver` 均原生支持 `inline` 响应头，兼顾 `<img>` 渲染与新标签页直览）；
-- **事务级防孤儿/防误删更换编排**：`RemoteUserService#uploadAvatar` 在 `@Transactional` 内严格执行：`uploadWithRollbackDelete` ➔ 更新 `sys_user.avatar` ➔ 旧键非空且不同时调用 `deleteAfterCommit(oldKey)`。
+- **事务解耦防孤儿/防误删更换编排**：`RemoteUserService#uploadAvatar` 在事务外完成图片校验与对象上传（避免慢 I/O 占住 DB 连接），随后在 `TransactionTemplate` 短事务内以 `PessimisticLockUtil.forUpdate` 锁定用户并更新 `sys_user.avatar`；若事务失败或抛出 `Error` 则立即执行静默补偿删除新上传对象，若成功提交则在 `executeAfterCommit` 清理非空且不同的旧头像键。
 
 ### 3.2 动态字典与系统参数两级缓存策略（含多租户参数兜底）
 - **统一两级缓存基础设施（`TwoLevelCacheManager` + `Caffeine` + 上层自适应降级）**：
@@ -109,6 +109,6 @@
 
 | 测试分层 | 执行环境与速度 | 覆盖范围与核心断言 |
 | :--- | :--- | :--- |
-| **Layer 1 · 纯单元测试** | 无 Spring 容器，纯 JUnit 5 + Mockito（毫秒级） | `PasswordPolicyValidator`、`ContactFieldCrypto`、`OpaqueSessionHandleCodec`（篡改/跨租户 AAD 失败）、`SolidDataPermissionHandler`（5 级与多角色并集 JSqlParser AST 结构与 `1 = 0` 断言）、Excel 批内查重与错误映射 |
-| **Layer 2 · 引擎与持久层集成测** | H2 `MODE=MySQL` + Flyway（`V1.0.0` + `V1.0.1`）+ MyBatis-Plus 完整拦截链（关闭 Redis/Storage） | 17 表迁移与 58 条确定性菜单种子、`SuperAdminBootstrapper` 幂等与并发冲突兜底、`@FieldEncrypt` 落盘密文与查询回显、5 级 `@DataScope` + 多租户隔离真 SQL 执行、租户 4 步初始化回滚/配额行锁/套餐裁剪、500 行导入原子回滚与批注渲染 |
-| **Layer 3 · Web 安全契约与架构守卫测** | `MockMvc`（`application-test.yml`）+ `ArchitectureGuardTest` | 登录 4 步校验链、`101004` `LoginLockDetailVO` 透传、不透明 `sessionId` 强退、`TenantAvailabilityInterceptor`（`101005`/`100002`）、`@SaCheckPermission`/`@Anonymous`、`SysEnumController` 鉴权、独立 `@RateLimiter` `429`/`Retry-After` 专项校验与 9 条 ArchUnit 硬守卫 |
+| **Layer 1 · 纯单元测试** | 无 Spring 容器，纯 JUnit 5 + Mockito（毫秒级） | `PasswordPolicyValidator`、`ContactFieldCrypto`、`OpaqueSessionHandleCodec`（篡改/跨租户 AAD 失败）、`SolidDataPermissionHandler`（5 级与多角色并集 JSqlParser AST 结构与 `1 = 0` 断言）、`AdaptiveRedisSupportTest`（分段本地互斥锁与定向淘汰）、`SysUserExcelServiceTest`（批注名净化/Future 撤回/导出预缓存与上限拦截）、`TreeCycleGuardTest`（5 处递归树 `visited` 防环）与 `SysTenantServiceTest`/`RemoteUserServiceImplTest` |
+| **Layer 2 · 引擎与持久层集成测** | H2 `MODE=MySQL` + Flyway（`V1.0.0` + `V1.0.1`）+ MyBatis-Plus 完整拦截链（关闭 Redis/Storage） | 17 表迁移与 58 条确定性菜单种子、`SuperAdminBootstrapper` 幂等与并发冲突兜底、`@FieldEncrypt` 落盘密文与查询回显、5 级 `@DataScope` + 多租户隔离真 SQL 执行、`OrgAndRbacConcurrencyAndBoundsIntegrationTest`（树层级与祖级边界/行锁顺序）、`TenantKickoutAndExpireIntegrationTest`（过期调优与 500 游标强退）、`SqlLikeSortAndTreeCycleIntegrationTest`（`LIKE` 通配符转义与 `pageRequest.orders()` 回退） |
+| **Layer 3 · Web 安全契约与架构守卫测** | `MockMvc`（`application-test.yml`）+ `ArchitectureGuardTest` | 登录 4 步校验链、`101004` `LoginLockDetailVO` 透传、不透明 `sessionId` 强退、`TenantAvailabilityInterceptor`（`101005`/`100002`）、`@SaCheckPermission`/`@Anonymous`、`SysEnumController` 鉴权、独立 `@RateLimiter` `429`、`IdempotentMockMvcTest`（`@Idempotent` 创/导防重与异常释放）、`ValidationAndExportCapMockMvcTest`（全量 Bean Validation 与 100 主键上限）与 9 条 ArchUnit 硬守卫 |

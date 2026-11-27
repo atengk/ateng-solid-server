@@ -6,6 +6,7 @@ import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.idempotent.annotation.Idempotent;
 import io.github.atengk.boot.web.ratelimit.annotation.LimitType;
 import io.github.atengk.boot.web.ratelimit.annotation.RateLimiter;
 import io.github.atengk.solid.system.request.StatusUpdateRequest;
@@ -86,6 +87,7 @@ public class SysTenantController {
      * @return 新建租户初始化凭据摘要
      */
     @SaCheckPermission("system:tenant:create")
+    @Idempotent
     @RateLimiter(limitType = LimitType.USER, key = "'system:tenant:create'", count = 5, time = 60)
     @OperateLog(module = "租户管理", type = OperateTypeEnum.INSERT, description = "新增租户", saveParams = false)
     @PostMapping

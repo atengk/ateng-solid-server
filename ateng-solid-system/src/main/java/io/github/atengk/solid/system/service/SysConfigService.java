@@ -62,15 +62,13 @@ public class SysConfigService {
                 safeQuery, SysConfig.class, true, SystemContextSupport.DEFAULT_MAX_PAGE_SIZE
         );
 
-        String configName = SystemContextSupport.trimToNull(safeQuery.getConfigName());
-        String configKey = SystemContextSupport.trimToNull(safeQuery.getConfigKey());
         String configType = SystemContextSupport.trimToNull(safeQuery.getConfigType());
         LambdaQueryWrapper<SysConfig> wrapper = Wrappers.<SysConfig>lambdaQuery()
                 .eq(SysConfig::getTenantId, tenantId)
-                .like(configName != null, SysConfig::getConfigName, configName)
-                .like(configKey != null, SysConfig::getConfigKey, configKey)
                 .eq(configType != null, SysConfig::getConfigType, configType);
-        if (CollectionUtils.isEmpty(safeQuery.getSorts())) {
+        SystemContextSupport.applyContainsLike(wrapper, SysConfig::getConfigName, safeQuery.getConfigName());
+        SystemContextSupport.applyContainsLike(wrapper, SysConfig::getConfigKey, safeQuery.getConfigKey());
+        if (CollectionUtils.isEmpty(pageRequest.orders())) {
             wrapper.orderByAsc(SysConfig::getId);
         }
 

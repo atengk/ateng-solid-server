@@ -96,7 +96,9 @@ public class RoleAuthorizationSupport {
         }
 
         Map<Long, List<SysMenu>> childrenMap = MenuTreeSupport.groupByParentId(activeMenus);
-        return buildGrantableSubtree(0L, childrenMap, packageMenuIds, platformView, multiTenantEnabled, effectiveActor);
+        return buildGrantableSubtree(
+                0L, childrenMap, packageMenuIds, platformView, multiTenantEnabled, effectiveActor, new HashSet<>()
+        );
     }
 
     /**
@@ -140,7 +142,9 @@ public class RoleAuthorizationSupport {
                 if (activeChildrenMap == null) {
                     activeChildrenMap = MenuTreeSupport.groupByParentId(loadActiveMenusOrdered());
                 }
-                if (hasAuthorizedPackageDescendant(menu.getId(), activeChildrenMap, requestedSet, packageMenuIds, multiTenantEnabled)) {
+                if (hasAuthorizedPackageDescendant(
+                        menu.getId(), activeChildrenMap, requestedSet, packageMenuIds, multiTenantEnabled, new HashSet<>()
+                )) {
                     continue;
                 }
             }
@@ -277,14 +281,21 @@ public class RoleAuthorizationSupport {
             Set<Long> packageMenuIds,
             boolean platformView,
             boolean multiTenantEnabled,
-            ActorPrivilegeContext actorPrivilege
+            ActorPrivilegeContext actorPrivilege,
+            Set<Long> visited
     ) {
+        if (parentId == null || !visited.add(parentId)) {
+            return Collections.emptyList();
+        }
         List<SysMenu> candidates = childrenMap.get(parentId);
         if (CollectionUtils.isEmpty(candidates)) {
             return Collections.emptyList();
         }
         List<MenuTreeVO> result = new ArrayList<>();
         for (SysMenu menu : candidates) {
+            if (menu == null || menu.getId() == null || visited.contains(menu.getId())) {
+                continue;
+            }
             if (!isGrantableNode(menu, platformView, multiTenantEnabled)) {
                 continue;
             }
@@ -301,7 +312,7 @@ public class RoleAuthorizationSupport {
                 continue;
             }
             List<MenuTreeVO> children = buildGrantableSubtree(
-                    menu.getId(), childrenMap, packageMenuIds, platformView, multiTenantEnabled, actorPrivilege
+                    menu.getId(), childrenMap, packageMenuIds, platformView, multiTenantEnabled, actorPrivilege, visited
             );
             if (nodeType == MenuTypeEnum.DIRECTORY) {
                 if (!children.isEmpty()) {
@@ -319,13 +330,20 @@ public class RoleAuthorizationSupport {
             Map<Long, List<SysMenu>> activeChildrenMap,
             Set<Long> requestedSet,
             Set<Long> packageMenuIds,
-            boolean multiTenantEnabled
+            boolean multiTenantEnabled,
+            Set<Long> visited
     ) {
+        if (dirId == null || !visited.add(dirId)) {
+            return false;
+        }
         List<SysMenu> children = activeChildrenMap.get(dirId);
         if (CollectionUtils.isEmpty(children)) {
             return false;
         }
         for (SysMenu child : children) {
+            if (child == null || child.getId() == null || visited.contains(child.getId())) {
+                continue;
+            }
             if (!isGrantableNode(child, false, multiTenantEnabled)) {
                 continue;
             }
@@ -338,11 +356,11 @@ public class RoleAuthorizationSupport {
                     return true;
                 }
                 if (hasAuthorizedPackageDescendant(
-                        child.getId(), activeChildrenMap, requestedSet, packageMenuIds, multiTenantEnabled)) {
+                        child.getId(), activeChildrenMap, requestedSet, packageMenuIds, multiTenantEnabled, visited)) {
                     return true;
                 }
             } else if (hasAuthorizedPackageDescendant(
-                    child.getId(), activeChildrenMap, requestedSet, packageMenuIds, multiTenantEnabled)) {
+                    child.getId(), activeChildrenMap, requestedSet, packageMenuIds, multiTenantEnabled, visited)) {
                 return true;
             }
         }

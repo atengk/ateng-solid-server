@@ -1,9 +1,11 @@
 package io.github.atengk.solid.system.support;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.util.TransactionUtil;
+import io.github.atengk.boot.mybatisplus.util.PessimisticLockUtil;
 import io.github.atengk.boot.satoken.cache.PermissionCacheService;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
@@ -57,6 +59,28 @@ public class TenantPackageMenuSyncSupport {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "套餐主键必须为正整数");
         }
         SysTenantPackage pkg = TenantContextHolder.runWithoutTenant(() -> sysTenantPackageMapper.selectById(packageId));
+        if (pkg == null) {
+            throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "目标租户套餐不存在");
+        }
+        return pkg;
+    }
+
+    /**
+     * 在写事务中以 {@code FOR UPDATE} 悲观行锁校验并返回指定未删除租户套餐实体。
+     *
+     * @param packageId 租户套餐主键
+     * @return 加锁后的租户套餐实体
+     */
+    public SysTenantPackage requirePackageExistsForUpdate(Long packageId) {
+        if (packageId == null || packageId <= 0L) {
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "套餐主键必须为正整数");
+        }
+        SysTenantPackage pkg = TenantContextHolder.runWithoutTenant(() -> {
+            LambdaQueryWrapper<SysTenantPackage> lockQuery = Wrappers.<SysTenantPackage>lambdaQuery()
+                    .eq(SysTenantPackage::getId, packageId);
+            PessimisticLockUtil.forUpdate(lockQuery);
+            return sysTenantPackageMapper.selectOne(lockQuery);
+        });
         if (pkg == null) {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND, "目标租户套餐不存在");
         }
