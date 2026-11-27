@@ -109,14 +109,17 @@ public class SysConfigService {
      *
      * @param tenantId  目标工作租户主键（为空时按平台默认租户 {@code 0} 处理）
      * @param configKey 参数键名
-     * @return 参数键值；双方均未配置或入参空白时返回 {@code null}
+     * @return 参数键值；双方均未配置或入参格式非法时返回 {@code null}
      */
     public String getConfigValue(Long tenantId, String configKey) {
         String normalizedKey = SystemContextSupport.trimToNull(configKey);
-        if (normalizedKey == null) {
+        if (normalizedKey == null || !CONFIG_KEY_PATTERN.matcher(normalizedKey).matches()) {
             return null;
         }
         Long effectiveTenantId = tenantId != null ? tenantId : SolidConstants.PLATFORM_TENANT_ID;
+        if (effectiveTenantId < 0L) {
+            return null;
+        }
         String tenantValue = loadFromTenantWithCache(effectiveTenantId, normalizedKey);
         if (tenantValue == null && !SolidConstants.PLATFORM_TENANT_ID.equals(effectiveTenantId)) {
             return loadFromTenantWithCache(SolidConstants.PLATFORM_TENANT_ID, normalizedKey);

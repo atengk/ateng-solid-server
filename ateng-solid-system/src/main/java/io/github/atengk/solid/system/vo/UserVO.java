@@ -1,12 +1,14 @@
 package io.github.atengk.solid.system.vo;
 
+import io.github.atengk.boot.core.annotation.FieldSensitive;
+import io.github.atengk.boot.core.enums.SensitiveType;
 import lombok.Builder;
 import lombok.Value;
 
 import java.time.LocalDateTime;
 
 /**
- * 用户分页列表响应视图对象（手机与邮箱保留内存真明文，前端列表渲染层按需脱敏，头像动态签发 inline URL）。
+ * 用户分页列表响应视图对象（手机与邮箱出界序列化经 {@link FieldSensitive} 动态脱敏；详情接口 {@link UserDetailVO} 保持内存真明文，头像动态签发 inline URL）。
  *
  * @author Ateng
  * @since 2026-11-25
@@ -46,13 +48,15 @@ public class UserVO {
     String nickname;
 
     /**
-     * 电子邮箱（内存真明文）
+     * 电子邮箱（列表响应经 {@link FieldSensitive} 动态脱敏）
      */
+    @FieldSensitive(SensitiveType.EMAIL)
     String email;
 
     /**
-     * 手机号码（内存真明文）
+     * 手机号码（列表响应经 {@link FieldSensitive} 动态脱敏）
      */
+    @FieldSensitive(SensitiveType.MOBILE_PHONE)
     String phone;
 
     /**

@@ -1,5 +1,6 @@
 package io.github.atengk.solid;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.context.TenantContextHolder;
@@ -7,6 +8,8 @@ import io.github.atengk.boot.core.context.UserContextHolder;
 import io.github.atengk.boot.core.util.PasswordUtil;
 import io.github.atengk.boot.mybatisplus.context.DataPermissionContextHolder;
 import io.github.atengk.boot.satoken.defense.LoginFailureLockService;
+import io.github.atengk.boot.satoken.model.LoginUser;
+import io.github.atengk.boot.satoken.util.LoginHelper;
 import io.github.atengk.boot.storage.driver.StorageDriver;
 import io.github.atengk.boot.storage.guard.StorageGuard;
 import io.github.atengk.boot.storage.model.PresignedDownloadRequest;
@@ -19,8 +22,10 @@ import io.github.atengk.boot.web.captcha.properties.CaptchaProperties;
 import io.github.atengk.boot.web.captcha.store.CaptchaStore;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
+import io.github.atengk.solid.system.entity.SysLoginLog;
 import io.github.atengk.solid.system.entity.SysTenant;
 import io.github.atengk.solid.system.entity.SysUser;
+import io.github.atengk.solid.system.mapper.SysLoginLogMapper;
 import io.github.atengk.solid.system.mapper.SysTenantMapper;
 import io.github.atengk.solid.system.mapper.SysUserMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -151,6 +156,8 @@ class AuthSecurityEdgeMockMvcTest {
     private SysTenantMapper sysTenantMapper;
     @Autowired
     private SysUserMapper sysUserMapper;
+    @Autowired
+    private SysLoginLogMapper sysLoginLogMapper;
 
     @BeforeAll
     void setUpFixtures() {
@@ -230,6 +237,23 @@ class AuthSecurityEdgeMockMvcTest {
                     .andExpect(jsonPath("$.code").value(101001));
         }
         assertThat(loginFailureLockService.isIpLocked(ATTACKER_IP)).isFalse();
+
+        // 验证码失败审计应当归位到请求解析租户 TENANT_ID 而非固定平台租户 0
+        long auditDeadline = System.currentTimeMillis() + Duration.ofSeconds(5).toMillis();
+        java.util.List<SysLoginLog> captchaFailLogs = java.util.List.of();
+        while (System.currentTimeMillis() < auditDeadline) {
+            captchaFailLogs = TenantContextHolder.runWithTenant(TENANT_ID, () -> sysLoginLogMapper.selectList(
+                    Wrappers.<SysLoginLog>lambdaQuery()
+                            .eq(SysLoginLog::getTenantId, TENANT_ID)
+                            .eq(SysLoginLog::getUsername, "alice_edge")
+                            .eq(SysLoginLog::getStatus, 1)
+            ));
+            if (captchaFailLogs.stream().anyMatch(log -> log.getMsg() != null && log.getMsg().contains("验证码"))) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertThat(captchaFailLogs).anyMatch(log -> log.getMsg() != null && log.getMsg().contains("验证码"));
 
         // 2. 第 1 次带正确验证码输错密码（ipRetry=1）-> 101002，且原验证码立即原子烧毁不能重放
         String oneTimeKey = issueKnownCaptcha("6688");
@@ -322,7 +346,7 @@ class AuthSecurityEdgeMockMvcTest {
         String aliceToken = objectMapper.readTree(loginRes.getResponse().getContentAsString())
                 .path("data").path("tokenValue").asText();
 
-        // 1. 缺少必填 gender 应当由 Bean Validation 拦截返回 400
+        // 1. 缺少必填 gender 或资料字段违反 UserContactAndDictSupport 校验规则应当拦截返回 400/100001
         mockMvc.perform(put("/admin/auth/profile")
                         .header("satoken-admin", aliceToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -331,6 +355,54 @@ class AuthSecurityEdgeMockMvcTest {
                         ))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(400));
+
+        mockMvc.perform(put("/admin/auth/profile")
+                        .header("satoken-admin", aliceToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "nickname", " a ",
+                                "phone", "13900007101",
+                                "email", "alice.edge@example.com",
+                                "gender", "1"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(100001));
+
+        mockMvc.perform(put("/admin/auth/profile")
+                        .header("satoken-admin", aliceToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "nickname", "爱丽丝",
+                                "phone", "invalid-phone",
+                                "email", "alice.edge@example.com",
+                                "gender", "1"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(100001));
+
+        mockMvc.perform(put("/admin/auth/profile")
+                        .header("satoken-admin", aliceToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "nickname", "爱丽丝",
+                                "phone", "13900007101",
+                                "email", "bad-email",
+                                "gender", "1"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(100001));
+
+        mockMvc.perform(put("/admin/auth/profile")
+                        .header("satoken-admin", aliceToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "nickname", "爱丽丝",
+                                "phone", "13900007101",
+                                "email", "alice.edge@example.com",
+                                "gender", "9"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(100001));
 
         // 2. 手机号冲突（占用 bob_edge 手机）与大小写邮箱冲突（占用 bob_edge 邮箱）均应返回 102002
         mockMvc.perform(put("/admin/auth/profile")
@@ -378,6 +450,13 @@ class AuthSecurityEdgeMockMvcTest {
                 .andExpect(jsonPath("$.data.phone").isEmpty())
                 .andExpect(jsonPath("$.data.email").value("alice.new@example.com"))
                 .andExpect(jsonPath("$.data.gender").value("0"));
+
+        LoginUser updatedSessionUser = LoginHelper.getSessionLoginUser(
+                LoginHelper.buildCompositeLoginId(String.valueOf(TENANT_ID), "7101"),
+                SolidConstants.ADMIN_LOGIN_TYPE
+        );
+        assertThat(updatedSessionUser).isNotNull();
+        assertThat(updatedSessionUser.getUserName()).isEqualTo("爱丽丝-已变更");
 
         // 4. 头像上传：伪造 PNG 魔数拦截 100004；真实 PNG 成功上传返回 objectPath 与 inline URL
         MockMultipartFile fakePng = new MockMultipartFile(

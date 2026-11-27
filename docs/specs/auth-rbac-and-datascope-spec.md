@@ -9,24 +9,26 @@
 
 - **账号体系与请求头**：
   - 管理端固定使用 `loginType = "admin"`，请求头名 `satoken-admin`（由 `LoginHelper.getStpLogic("admin")` 自动生成）；
-  - 配置 `ateng.boot.satoken.primary-login-type=admin`、`interceptor.check-login=true`、`interceptor.login-type-routes.admin=/admin/**`；
-  - 公开免鉴权接口（如登录 `POST /admin/auth/login`、验证码 `GET /admin/auth/captcha`）统一显式标注 `@Anonymous`；同时叠加 `ateng-boot-web` `@RateLimiter`（均按 `LimitType.IP` `30 次 / 60s`，前缀收口为 `${SOLID_REDIS_KEY_PREFIX:solid:}rate_limit:` 且 `fail-open: true`；`test` Profile 通过 `ateng.boot.web.ratelimit.enabled: false` 隔离）。
+  - 配置 `ateng.boot.satoken.primary-login-type=admin`、`token.is-share=false`（每次登录签发互不干扰的独立会话令牌，防止多端共享互相踢出或引发 `101007` 自杀拦截）、`interceptor.check-login=true`、`interceptor.login-type-routes.admin=/admin/**`；
+  - 公开免鉴权接口（如登录 `POST /admin/auth/login`、验证码 `GET /admin/auth/captcha`）统一显式标注 `@Anonymous`；同时叠加 `ateng-boot-web` `@RateLimiter`（公开接口按 `LimitType.IP` `30 次 / 60s`；高敏写操作 `PUT /admin/auth/password` 与 `POST /admin/system/tenant` 按 `LimitType.USER` `5 次 / 60s`，`POST /admin/auth/profile/avatar` 与 `PUT /admin/system/user/{id}/reset-password` 按 `LimitType.USER` `10 次 / 60s`；前缀统一收口为 `${SOLID_REDIS_KEY_PREFIX:solid:}rate_limit:` 且 `fail-open: true`；`test` Profile 通过 `ateng.boot.web.ratelimit.enabled: false` 隔离）。
 - **图形验证码（`CaptchaTemplate`）**：
   - `CaptchaTemplate` 归属 `ateng-boot-web`，由业务配置 `ateng.solid.auth.captcha-enabled`（默认可配开启）控制是否强校验图形验证码；
   - 校验统一调用 **`boolean verify(captchaKey, code)`**（一次一密原子烧毁），返回 `false` 时业务层显式抛出 `AuthResultCode(101001)`（因底座 `verifyOrThrow` 固定抛 HTTP `400`）。
 - **登录校验顺序、口令安全与防爆破结构化透传（`101004`）**：
-  - `POST /admin/auth/login` 严格按串行顺序校验：**图形验证码（`101001`）➔ 租户解析与可用性（`101005`，不计密码失败次数）➔ 防爆破前置检查（`101004`）➔ 账号与口令统一防枚举计数（`101002`/`101003`/`101004`）**；
+  - `POST /admin/auth/login` 严格按串行顺序校验：**图形验证码（`101001`）➔ 租户解析与可用性（`101005`，不计密码失败次数）➔ 防爆破前置检查（`101004`）➔ 账号与口令恒定耗时防枚举计数（`101002`/`101003`/`101004`）**；
+  - **防计时枚举与低迭代哈希平滑升级**：账号不存在时执行合法 `310,000` 次迭代 `DUMMY_PASSWORD_HASH` 慢哈希比对确保恒定耗时；普通启用账号验密成功后若 `PasswordUtil.needsUpgrade(...)` 为 `true`，利用当次明文密码重新计算最新慢哈希并通过 `RemoteUserService#upgradePasswordHash` 回写落库（严禁改动 `pwd_update_time`）；
   - **双轨防爆破锁定检查与结构化剩余秒数透传**：
     - `PasswordAuthGrantHandler` 先检查客户端 IP 熔断（`LoginFailureLockService.isIpLocked(clientIp)` + `getIpLockTime(clientIp)`），再检查作用域账号锁定（`isLocked(tenantIdStr, "admin", username)` + `getDisableTime(tenantIdStr, "admin", username)`）；账号不存在或口令不匹配时调用 `recordFailure(tenantIdStr, "admin", username, clientIp)`，若返回 `0` 则同样按“先 IP 后账号”读取剩余锁定秒数并保底 `Math.max(1L, remainSeconds)`；
     - 在 `ateng-solid-auth` 定义专有异常子类 **`LoginLockedException extends BusinessException`**（携带 `lockType: "IP" | "ACCOUNT"` 与 `remainSeconds: long`）及 **`LoginLockDetailVO(String lockType, long remainSeconds)`**，并注册轻量 **`GlobalExceptionCustomizer`** Bean 拦截 `LoginLockedException` 返回标准 `Result<LoginLockDetailVO>`（`code = 101004`、`msg` 为友好中文倒计时文案、`data = { lockType, remainSeconds }`）；
     - 前端 `@atengk/core` 响应拦截器已自动将完整 `result` 挂载至 `BusinessException.cause`，`/login` 直接读取 `(err.cause as Result<LoginLockDetailVO>)?.data` 驱动秒级倒计时，彻底杜绝正则解析文案；`lockType === "ACCOUNT"` 时修改用户名或租户编码自动解除客户端倒计时，`lockType === "IP"` 时保持倒计时直至归零。
   - **密码复杂度与零明文跨模块传输**：
     - 密码存储与比对 100% 复用 `PasswordUtil.hash(...)` / `PasswordUtil.matches(...)`（`PBKDF2WithHmacSHA256`）；底座不提供复杂度校验，由 `ateng-solid-common` `PasswordPolicyValidator` 统一强制“8~20 位无空白且至少含 3 类字符”强口令策略；
-    - 个人改密（`PUT /admin/auth/password`）的旧密码校验（抛 `101006`）与新密码哈希计算全部在 `ateng-solid-auth` 内完成，仅将加密后的慢哈希通过 `RemoteUserService.updatePasswordHash` 写入数据库，杜绝明文口令跨模块传输；
+    - 个人改密（`PUT /admin/auth/password`）强制校验新旧密码不可相同（`100001`）、旧密码核验（抛 `101006`）与新密码哈希计算全部在 `ateng-solid-auth` 内完成，仅将加密后的慢哈希通过 `RemoteUserService.updatePasswordHash` 写入数据库，杜绝明文口令跨模块传输；
+    - 个人资料更新（`PUT /admin/auth/profile`）统一对齐 `UserContactAndDictSupport` 校验（昵称 2~30、邮箱 `<= 64`、合法手机号及动态 `sys_user_gender` 字典），落库后同步刷新 `LoginHelper.setLoginUser("admin", ...)` 内 `userName`；
     - 修改密码（`PUT /admin/auth/password`）、重置密码及停用/删除用户或租户时，联动写入 `pwd_update_time` 并通过 `LoginHelper` 强制注销全部活跃 `admin` 会话；
   - **登录/登出全链路审计事件（`LoginAuditEvent`）**：
-    - `AuthService` 自身无持久化表、严禁标注 `@Transactional`，在登录成功、登录失败（含 `101001`~`101005` 捕获后重抛，未解析出租户时 `tenantId` 记 `0L`）与注销登出时均调用 `DomainEventPublisher.publish(LoginAuditEvent)`；
-    - `system` 异步监听器转调 `RemoteAuditLogService.recordLoginAudit` 落库 `sys_login_log`（通过上层自适应门面消费 `RedisIdempotentTemplate`，键 `audit:login:{eventId}`、24h TTL、`deleteOnFailure=true`，重复事件静默跳过；复用 `UserAgentUtil.parse` 解析 `browser`/`os`，透传 `AsyncContext` 四维快照），登录成功时同步更新 `sys_user.login_ip`/`login_date`。
+    - `AuthService` 自身无持久化表、严禁标注 `@Transactional`，在登录成功（`action = "LOGIN"`）、登录失败（`action = "LOGIN"`，含 `101001` 验证码失败也尝试经 `resolveTenantIdForAudit` 解析租户，未命中记 `0L`）与注销登出（`action = "LOGOUT"`）时均调用 `DomainEventPublisher.publish(LoginAuditEvent)`；
+    - `system` 异步监听器转调 `RemoteAuditLogService.recordLoginAudit` 落库 `sys_login_log`（通过上层自适应门面消费 `RedisIdempotentTemplate`，键 `audit:login:{eventId}`、24h TTL、`deleteOnFailure=true`，重复事件静默跳过；复用 `UserAgentUtil.parse` 解析 `browser`/`os`，透传 `AsyncContext` 四维快照），**仅在 `action != "LOGOUT"` 且 `status == 0 && userId != null` 时更新 `sys_user.login_ip`/`login_date`**（登出严禁覆写最后登录轨迹）。
 - **可插拔认证策略 SPI (`AuthGrantHandler` · 归属 `ateng-solid-common`)**：
   - 接口与载荷（`AuthGrantCommand`、`AuthenticatedPrincipal`）位于 `io.github.atengk.solid.common.spi.auth`，使二期扩展模块（如 `ext-social`）仅依赖 `common` 即可实现并注册 Bean，满足不依赖 `auth` 实现模块的 ArchUnit 红线；
   - `AuthService` 专职按 `grantType`（缺省 `"password"`）路由到对应 `AuthGrantHandler`、签发 `satoken-admin` 会话并发布 `LoginAuditEvent`；账密专属防线完整内聚在 `PasswordAuthGrantHandler` 中。

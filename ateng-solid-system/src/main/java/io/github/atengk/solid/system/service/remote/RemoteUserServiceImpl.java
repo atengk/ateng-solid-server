@@ -26,6 +26,7 @@ import io.github.atengk.solid.system.mapper.SysUserPostMapper;
 import io.github.atengk.solid.system.mapper.SysUserRoleMapper;
 import io.github.atengk.solid.system.support.AvatarStorageHelper;
 import io.github.atengk.solid.system.support.ContactFieldCrypto;
+import io.github.atengk.solid.system.support.UserContactAndDictSupport;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -53,6 +54,7 @@ public class RemoteUserServiceImpl implements RemoteUserService {
     private final SysUserPostMapper sysUserPostMapper;
     private final RemoteTenantService remoteTenantService;
     private final AvatarStorageHelper avatarStorageHelper;
+    private final UserContactAndDictSupport userContactAndDictSupport;
     private final TransactionTemplate transactionTemplate;
 
     @Override
@@ -150,23 +152,26 @@ public class RemoteUserServiceImpl implements RemoteUserService {
         try {
             TenantContextHolder.runWithTenant(tenantId, () -> transactionTemplate.executeWithoutResult(status -> {
                 SysUser existing = requireUserInternal(tenantId, userId);
-                String nickname = resolveNonBlankOrFallback(
-                        cmd.getNickname(), existing.getNickname(), "用户昵称不能为空白字符");
-                String gender = resolveNonBlankOrFallback(
-                        cmd.getGender(), existing.getGender(), "用户性别编码不能为空白字符");
-                String normalizedPhone = ContactFieldCrypto.normalizePhone(cmd.getPhone());
-                String normalizedEmail = ContactFieldCrypto.normalizeEmail(cmd.getEmail());
+                if (cmd.getGender() != null && !StringUtils.hasText(cmd.getGender())) {
+                    throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "用户性别编码不能为空白字符");
+                }
+                String nickname = cmd.getNickname() != null
+                        ? userContactAndDictSupport.requireValidNickname(cmd.getNickname())
+                        : existing.getNickname();
+                UserContactAndDictSupport.NormalizedContactAndGender profileFields =
+                        userContactAndDictSupport.normalizeAndValidateProfileFields(
+                                cmd.getPhone(), cmd.getEmail(), cmd.getGender(), existing.getGender());
 
-                assertContactUnique(tenantId, userId, normalizedPhone, normalizedEmail);
+                assertContactUnique(tenantId, userId, profileFields.phone(), profileFields.email());
 
                 // LambdaUpdateWrapper#set 无自动 TypeHandler，必须传确定性密文且显式置 null 清空绑定
                 LambdaUpdateWrapper<SysUser> updateWrapper = Wrappers.<SysUser>lambdaUpdate()
                         .eq(SysUser::getTenantId, tenantId)
                         .eq(SysUser::getId, userId)
                         .set(SysUser::getNickname, nickname)
-                        .set(SysUser::getGender, gender)
-                        .set(SysUser::getPhone, ContactFieldCrypto.encryptPhoneForQuery(cmd.getPhone()))
-                        .set(SysUser::getEmail, ContactFieldCrypto.encryptEmailForQuery(cmd.getEmail()));
+                        .set(SysUser::getGender, profileFields.gender())
+                        .set(SysUser::getPhone, ContactFieldCrypto.encryptPhoneForQuery(profileFields.phone()))
+                        .set(SysUser::getEmail, ContactFieldCrypto.encryptEmailForQuery(profileFields.email()));
                 sysUserMapper.update(new SysUser(), updateWrapper);
             }));
         } catch (DuplicateKeyException ex) {
@@ -198,24 +203,38 @@ public class RemoteUserServiceImpl implements RemoteUserService {
 
     @Override
     public void updatePasswordHash(Long tenantId, Long userId, String encodedPassword, LocalDateTime pwdUpdateTime) {
+        LocalDateTime effectiveUpdateTime = pwdUpdateTime != null ? pwdUpdateTime : LocalDateTime.now();
+        persistPasswordHashInternal(tenantId, userId, encodedPassword, effectiveUpdateTime);
+    }
+
+    @Override
+    public void upgradePasswordHash(Long tenantId, Long userId, String encodedPassword) {
+        persistPasswordHashInternal(tenantId, userId, encodedPassword, null);
+    }
+
+    private void persistPasswordHashInternal(
+            Long tenantId,
+            Long userId,
+            String encodedPassword,
+            LocalDateTime pwdUpdateTime
+    ) {
         if (tenantId == null || userId == null) {
             throw new BusinessException(SystemResultCode.RECORD_NOT_FOUND);
         }
         if (!StringUtils.hasText(encodedPassword)) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "密码哈希值不能为空");
         }
-        LocalDateTime effectiveUpdateTime = pwdUpdateTime != null ? pwdUpdateTime : LocalDateTime.now();
 
         TenantContextHolder.runWithTenant(tenantId, () -> transactionTemplate.executeWithoutResult(status -> {
             requireUserInternal(tenantId, userId);
-            sysUserMapper.update(
-                    new SysUser(),
-                    Wrappers.<SysUser>lambdaUpdate()
-                            .eq(SysUser::getTenantId, tenantId)
-                            .eq(SysUser::getId, userId)
-                            .set(SysUser::getPassword, encodedPassword)
-                            .set(SysUser::getPwdUpdateTime, effectiveUpdateTime)
-            );
+            LambdaUpdateWrapper<SysUser> updateWrapper = Wrappers.<SysUser>lambdaUpdate()
+                    .eq(SysUser::getTenantId, tenantId)
+                    .eq(SysUser::getId, userId)
+                    .set(SysUser::getPassword, encodedPassword);
+            if (pwdUpdateTime != null) {
+                updateWrapper.set(SysUser::getPwdUpdateTime, pwdUpdateTime);
+            }
+            sysUserMapper.update(new SysUser(), updateWrapper);
         }));
     }
 
@@ -327,17 +346,6 @@ public class RemoteUserServiceImpl implements RemoteUserService {
                 throw new BusinessException(SystemResultCode.DUPLICATE_RESOURCE, "电子邮箱已被同一租户下其他用户绑定");
             }
         }
-    }
-
-    private static String resolveNonBlankOrFallback(String requested, String fallback, String blankMessage) {
-        if (requested == null) {
-            return fallback;
-        }
-        String trimmed = requested.trim();
-        if (trimmed.isEmpty()) {
-            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, blankMessage);
-        }
-        return trimmed;
     }
 
     private static List<String> safeList(List<String> values) {

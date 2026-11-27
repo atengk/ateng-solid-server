@@ -54,6 +54,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -351,6 +352,97 @@ class RateLimiterMockMvcTest {
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Disposition", containsString(".xlsx")))
                 .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT_REMAINING, "9"));
+    }
+
+    @Test
+    @DisplayName("个人改密、头像上传、管理员重置密码与新增租户接口应当按 USER 维度触发 429 限流")
+    void shouldRateLimitSensitiveMutationEndpointsByUser() throws Exception {
+        String superToken = loginAndGetToken("superadmin", "Ateng@Test2026", "198.51.100.50");
+        String userAToken = loginAndGetToken(USER_A_NAME, USER_A_PASS, "198.51.100.51");
+
+        // 1. PUT /admin/auth/password (5次/60s)
+        String badPwdPayload = objectMapper.writeValueAsString(Map.of(
+                "oldPassword", "Wrong@Old1",
+                "newPassword", "Ateng@New2026"
+        ));
+        for (int i = 0; i < 5; i++) {
+            mockMvc.perform(put("/admin/auth/password")
+                            .header("satoken-admin", userAToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(badPwdPayload))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT, "5"))
+                    .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT_REMAINING, String.valueOf(4 - i)));
+        }
+        mockMvc.perform(put("/admin/auth/password")
+                        .header("satoken-admin", userAToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(badPwdPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(CommonResultCode.TOO_MANY_REQUESTS.getCode()))
+                .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT_REMAINING, "0"))
+                .andExpect(header().string(RateLimiterAspect.HEADER_RETRY_AFTER, "60"));
+
+        // 2. POST /admin/auth/profile/avatar (10次/60s)
+        MockMultipartFile emptyAvatar = new MockMultipartFile(
+                "file", "empty.png", "image/png", new byte[0]);
+        for (int i = 0; i < 10; i++) {
+            mockMvc.perform(multipart("/admin/auth/profile/avatar")
+                            .file(emptyAvatar)
+                            .header("satoken-admin", userAToken))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT, "10"))
+                    .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT_REMAINING, String.valueOf(9 - i)));
+        }
+        mockMvc.perform(multipart("/admin/auth/profile/avatar")
+                        .file(emptyAvatar)
+                        .header("satoken-admin", userAToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(CommonResultCode.TOO_MANY_REQUESTS.getCode()))
+                .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT_REMAINING, "0"))
+                .andExpect(header().string(RateLimiterAspect.HEADER_RETRY_AFTER, "60"));
+
+        // 3. PUT /admin/system/user/{id}/reset-password (10次/60s)
+        for (int i = 0; i < 10; i++) {
+            mockMvc.perform(put("/admin/system/user/{id}/reset-password", 999999L)
+                            .header("satoken-admin", superToken))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT, "10"))
+                    .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT_REMAINING, String.valueOf(9 - i)));
+        }
+        mockMvc.perform(put("/admin/system/user/{id}/reset-password", 999999L)
+                        .header("satoken-admin", superToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(CommonResultCode.TOO_MANY_REQUESTS.getCode()))
+                .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT_REMAINING, "0"))
+                .andExpect(header().string(RateLimiterAspect.HEADER_RETRY_AFTER, "60"));
+
+        // 4. POST /admin/system/tenant (5次/60s)
+        String tenantPayload = objectMapper.writeValueAsString(Map.of(
+                "tenantCode", "TRATE1",
+                "tenantName", "限流验证租户",
+                "packageId", 1,
+                "accountCount", -1,
+                "adminUsername", "tenant_adm",
+                "adminPassword", "Ateng@Tenant1"
+        ));
+        for (int i = 0; i < 5; i++) {
+            mockMvc.perform(post("/admin/system/tenant")
+                            .header("satoken-admin", superToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(tenantPayload))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT, "5"))
+                    .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT_REMAINING, String.valueOf(4 - i)));
+        }
+        mockMvc.perform(post("/admin/system/tenant")
+                        .header("satoken-admin", superToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(tenantPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(CommonResultCode.TOO_MANY_REQUESTS.getCode()))
+                .andExpect(header().string(RateLimiterAspect.HEADER_RATE_LIMIT_REMAINING, "0"))
+                .andExpect(header().string(RateLimiterAspect.HEADER_RETRY_AFTER, "60"));
     }
 
     private String loginAndGetToken(String username, String password, String clientIp) throws Exception {

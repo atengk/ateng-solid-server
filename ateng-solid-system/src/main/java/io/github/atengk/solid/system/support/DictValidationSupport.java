@@ -50,6 +50,16 @@ public final class DictValidationSupport {
     }
 
     /**
+     * 校验字典类型编码是否符合标准格式（以小写字母开头，仅含小写字母、数字和下划线，2~64 位）。
+     *
+     * @param dictType 候选字典类型编码
+     * @return 符合规范返回 {@code true}
+     */
+    public static boolean isValidDictTypeFormat(String dictType) {
+        return dictType != null && DICT_TYPE_PATTERN.matcher(dictType).matches();
+    }
+
+    /**
      * 校验并规范化字典类型编码。
      *
      * @param raw 原始类型编码
@@ -57,7 +67,7 @@ public final class DictValidationSupport {
      */
     public static String requireValidDictType(String raw) {
         String dictType = SystemContextSupport.trimToNull(raw);
-        if (dictType == null || !DICT_TYPE_PATTERN.matcher(dictType).matches()) {
+        if (!isValidDictTypeFormat(dictType)) {
             throw new BusinessException(
                     CommonBizResultCode.PARAM_INVALID,
                     "字典类型编码须以小写字母开头，仅含小写字母、数字和下划线（2~64 位）"

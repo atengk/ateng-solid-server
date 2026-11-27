@@ -5,6 +5,8 @@ import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.ratelimit.annotation.LimitType;
+import io.github.atengk.boot.web.ratelimit.annotation.RateLimiter;
 import io.github.atengk.solid.auth.request.UpdatePasswordRequest;
 import io.github.atengk.solid.auth.request.UpdateProfileRequest;
 import io.github.atengk.solid.auth.service.ProfileService;
@@ -72,6 +74,7 @@ public class ProfileController {
      * @return 预览访问 URL 与持久对象键
      */
     @SaCheckLogin
+    @RateLimiter(limitType = LimitType.USER, key = "'auth:profile:avatar'", count = 10, time = 60)
     @OperateLog(module = "个人中心", type = OperateTypeEnum.UPDATE, description = "上传个人头像", saveParams = false)
     @PostMapping("/profile/avatar")
     public Result<AvatarUploadVO> uploadAvatar(@RequestParam("file") MultipartFile file) {
@@ -102,6 +105,7 @@ public class ProfileController {
      * @return 空成功响应
      */
     @SaCheckLogin
+    @RateLimiter(limitType = LimitType.USER, key = "'auth:profile:password'", count = 5, time = 60)
     @OperateLog(module = "个人中心", type = OperateTypeEnum.UPDATE, description = "自助修改登录密码", saveParams = false)
     @PutMapping("/password")
     public Result<Void> updatePassword(@Valid @RequestBody UpdatePasswordRequest request) {

@@ -338,9 +338,20 @@ class SysUserCrudAndDataScopeTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
                 .andReturn();
-        List<String> rdVisibleUsernames = objectMapper.readTree(rdPageRes.getResponse().getContentAsString())
-                .path("data").path("records").findValuesAsText("username");
+        JsonNode rdRecords = objectMapper.readTree(rdPageRes.getResponse().getContentAsString())
+                .path("data").path("records");
+        List<String> rdVisibleUsernames = rdRecords.findValuesAsText("username");
         assertThat(rdVisibleUsernames).containsExactlyInAnyOrder("rd_lead", "backend_dev");
+        JsonNode backendRow = null;
+        for (JsonNode row : rdRecords) {
+            if ("backend_dev".equals(row.path("username").asText())) {
+                backendRow = row;
+                break;
+            }
+        }
+        assertThat(backendRow).isNotNull();
+        assertThat(backendRow.path("phone").asText()).isEqualTo("139****2000");
+        assertThat(backendRow.path("email").asText()).isEqualTo("b*********v@example.com");
 
         // 越权查看非可见部门成员详情返回 102001
         mockMvc.perform(get("/admin/system/user/{id}", USER_SALES_REP)

@@ -5,8 +5,12 @@
 ## Language
 
 **管理端令牌会话 (Admin Session)**:
-隶属 `admin` 账号体系的分布式登录会话与令牌载荷，通过 `satoken-admin` 请求头鉴权。
-_Avoid_: 复用默认 `login` 体系令牌
+隶属 `admin` 账号体系的独立签发（`is-share: false`）分布式登录会话与令牌载荷，每次登录签发互不干扰的独立 `tokenValue` 并通过 `satoken-admin` 请求头鉴权；低迭代历史 PBKDF2 口令哈希在登录校验成功后自动平滑升级至最新安全参数（不改动 `pwd_update_time`）。
+_Avoid_: 复用默认 `login` 体系令牌，或同账号多端登录共享同一 Token 导致单端登出/踢出误伤其它端
+
+**登录与登出审计解耦 (Login/Logout Audit Decoupling)**:
+登录与登出审计事件通过显式动作标识（`LOGIN` / `LOGOUT`）区分，仅登录成功事件允许更新 `sys_user.login_ip` 与 `login_date`，登出仅追加登出审计流水。
+_Avoid_: 登出回溯覆写用户最后登录 IP/时间
 
 **图形验证码策略 (Captcha Policy)**:
 可按配置开关控制的一次一密图形验证码防刷防线，校验成功后立即原子失效。

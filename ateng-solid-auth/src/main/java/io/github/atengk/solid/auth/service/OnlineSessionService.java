@@ -33,6 +33,7 @@ import java.util.Objects;
 public class OnlineSessionService {
 
     private static final int MAX_PAGE_SIZE = 100;
+    private static final ZoneId SHANGHAI_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final OpaqueSessionHandleCodec opaqueSessionHandleCodec;
 
@@ -47,6 +48,12 @@ public class OnlineSessionService {
         String effectiveTenantId = AuthContextSupport.resolveEffectiveTenantIdString();
         long current = query != null ? query.safeCurrent() : 1L;
         long size = query != null ? Math.min(query.safeSize(), MAX_PAGE_SIZE) : 10L;
+        int maxScanLimit = LoginHelper.getOnlineSessionMaxScanLimit();
+        if (current > Integer.MAX_VALUE
+                || (current - 1L) > Long.MAX_VALUE / size
+                || (current - 1L) * size >= maxScanLimit) {
+            return PageResult.empty(current, size);
+        }
 
         OnlineUserQuery baseQuery = OnlineUserQuery.builder()
                 .tenantId(effectiveTenantId)
@@ -120,7 +127,7 @@ public class OnlineSessionService {
         );
         String tokenMask = opaqueSessionHandleCodec.maskToken(rawToken);
         LocalDateTime loginTime = onlineUser.getLoginTime() != null
-                ? LocalDateTime.ofInstant(Instant.ofEpochMilli(onlineUser.getLoginTime()), ZoneId.systemDefault())
+                ? LocalDateTime.ofInstant(Instant.ofEpochMilli(onlineUser.getLoginTime()), SHANGHAI_ZONE)
                 : null;
         long tokenTimeout = onlineUser.getTokenTimeout() != null ? onlineUser.getTokenTimeout() : 0L;
 

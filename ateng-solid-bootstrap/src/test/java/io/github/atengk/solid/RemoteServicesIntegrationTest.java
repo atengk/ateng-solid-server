@@ -743,6 +743,25 @@ class RemoteServicesIntegrationTest {
         AdminAuthUserDTO bobAfterFail = remoteUserService.getAuthUserById(TENANT_A_ID, USER_BOB_ID);
         assertThat(bobAfterFail.getLoginIp()).isEqualTo("10.20.30.40");
 
+        // 登出成功事件（action=LOGOUT）不回写用户最近登录 IP 与时间
+        remoteAuditLogService.recordLoginAudit(LoginAuditCommand.builder()
+                .eventId("evt-" + UUID.randomUUID())
+                .occurredAt(loginTime.plusSeconds(2))
+                .tenantId(TENANT_A_ID)
+                .traceId("trace-logout-1")
+                .userId(USER_BOB_ID)
+                .username("bob")
+                .loginType(SolidConstants.ADMIN_LOGIN_TYPE)
+                .clientIp("77.77.77.77")
+                .userAgent("Mozilla/5.0 Chrome/131.0")
+                .status(LogStatusEnum.SUCCESS.getCode())
+                .action(LoginAuditEvent.ACTION_LOGOUT)
+                .message("退出登录成功")
+                .build());
+        AdminAuthUserDTO bobAfterLogout = remoteUserService.getAuthUserById(TENANT_A_ID, USER_BOB_ID);
+        assertThat(bobAfterLogout.getLoginIp()).isEqualTo("10.20.30.40");
+        assertThat(bobAfterLogout.getLoginDate()).isEqualTo(loginTime);
+
         // 通过 DomainEventPublisher 触发异步监听落库
         String asyncTraceId = "trace-async-" + UUID.randomUUID();
         domainEventPublisher.publish(LoginAuditEvent.builder()

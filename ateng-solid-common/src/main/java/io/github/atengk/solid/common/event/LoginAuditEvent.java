@@ -25,6 +25,16 @@ public class LoginAuditEvent implements DomainEvent {
     private static final long serialVersionUID = 1L;
 
     /**
+     * 登录审计动作标识
+     */
+    public static final String ACTION_LOGIN = "LOGIN";
+
+    /**
+     * 登出审计动作标识
+     */
+    public static final String ACTION_LOGOUT = "LOGOUT";
+
+    /**
      * 事件全局唯一标识（用于日志写入幂等）
      */
     @Builder.Default
@@ -75,6 +85,11 @@ public class LoginAuditEvent implements DomainEvent {
      * 执行状态（0=成功，1=失败，对齐 LogStatusEnum）
      */
     private Integer status;
+
+    /**
+     * 审计动作类型（{@link #ACTION_LOGIN} / {@link #ACTION_LOGOUT}）
+     */
+    private String action;
 
     /**
      * 认证结果或失败提示摘要

@@ -55,3 +55,7 @@ _Avoid_: 在并发导入或建号入口仅做无锁先查后插导致配额穿�
 **跨租户菜单裁剪 (Cross-Tenant Package Pruning)**:
 平台端缩减租户套餐菜单或为租户切换更窄套餐时，在保留半选态活跃祖先目录 `M` 的前提下原子清理关联租户 `sys_role_menu` 中的越界权限，并在事务提交后全局清退权限缓存。
 _Avoid_: 粗暴删除半选祖先目录破坏既定角色授权树，或在事务回滚前提前清缓存
+
+**列表脱敏与详情真明文 (List Masking vs Detail Plaintext)**:
+高频列表与树节点视图（`UserVO`、`DeptTreeVO`）的联系手机号/邮箱由服务端在 Jackson 出界序列化阶段通过 `@FieldSensitive` 动态脱敏；编辑详情（`UserDetailVO`、`DeptVO`、`PersonalProfileDTO`）保留内存真明文以支持表单无污染编辑保存。
+_Avoid_: 在分页或树形列表接口直接输出全量明文手机号/邮箱，或在 `GET /{id}` 编辑详情接口回传星号掩码导致表单回写脏数据

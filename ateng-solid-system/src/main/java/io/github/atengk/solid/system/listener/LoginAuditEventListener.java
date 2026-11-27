@@ -44,6 +44,7 @@ public class LoginAuditEventListener {
                 .clientIp(event.getClientIp())
                 .userAgent(event.getUserAgent())
                 .status(event.getStatus())
+                .action(event.getAction())
                 .message(event.getMessage())
                 .build();
         try {

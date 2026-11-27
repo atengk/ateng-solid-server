@@ -19,6 +19,7 @@ import io.github.atengk.solid.system.api.dto.TenantAuthDTO;
 import io.github.atengk.solid.system.api.service.RemotePermissionService;
 import io.github.atengk.solid.system.api.service.RemoteUserService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
@@ -33,9 +34,16 @@ import java.util.List;
  * @author Ateng
  * @since 2026-11-25
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class PasswordAuthGrantHandler implements AuthGrantHandler {
+
+    /**
+     * 不存在用户恒定耗时防枚举哑哈希（合法 310,000 次迭代 PBKDF2-SHA256 载荷，16 字节盐 + 32 字节摘要）
+     */
+    private static final String DUMMY_PASSWORD_HASH =
+            "$pbkdf2-sha256$310000$AAECAwQFBgcICQoLDA0ODw$AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 
     private final SolidAuthProperties authProperties;
     private final TenantResolutionSupport tenantResolutionSupport;
@@ -70,19 +78,10 @@ public class PasswordAuthGrantHandler implements AuthGrantHandler {
         // 3. 防爆破前置检查：先查客户端 IP 熔断，再查租户作用域账号锁定
         throwIfAlreadyLocked(tenantIdStr, loginType, username, resolvedIp);
 
-        // 4. 在显式租户定界内校验账号与 PBKDF2 口令，统一计数防枚举，成功则清除失败计数
-        AdminAuthUserDTO authUser = TenantContextHolder.runWithTenant(
-                tenant.getTenantId(),
-                () -> remoteUserService.getAuthUserByUsername(tenant.getTenantId(), username)
+        // 4. 在显式租户定界内校验账号与 PBKDF2 口令（防计时枚举 + 停用检查 + 低迭代哈希平滑升级）
+        AdminAuthUserDTO authUser = verifyPasswordAndUpgradeIfNeeded(
+                tenant.getTenantId(), tenantIdStr, loginType, username, command.getPassword(), resolvedIp
         );
-        if (authUser == null
-                || !StringUtils.hasText(command.getPassword())
-                || !PasswordUtil.matches(command.getPassword(), authUser.getPasswordHash())) {
-            recordFailureAndThrow(tenantIdStr, loginType, username, resolvedIp);
-        }
-        if (!CommonStatusEnum.NORMAL.getCode().equals(authUser.getStatus())) {
-            throw new BusinessException(AuthResultCode.ACCOUNT_DISABLED);
-        }
 
         loginFailureLockService.clearFailure(tenantIdStr, loginType, username);
         List<String> roleKeys = safeList(
@@ -101,6 +100,46 @@ public class PasswordAuthGrantHandler implements AuthGrantHandler {
                 .roles(roleKeys)
                 .permissions(Collections.emptyList())
                 .build();
+    }
+
+    private AdminAuthUserDTO verifyPasswordAndUpgradeIfNeeded(
+            Long tenantId,
+            String tenantIdStr,
+            String loginType,
+            String username,
+            String rawPassword,
+            String resolvedIp
+    ) {
+        AdminAuthUserDTO authUser = TenantContextHolder.runWithTenant(
+                tenantId,
+                () -> remoteUserService.getAuthUserByUsername(tenantId, username)
+        );
+        boolean passwordProvided = StringUtils.hasText(rawPassword);
+        if (authUser == null) {
+            if (passwordProvided) {
+                PasswordUtil.matches(rawPassword, DUMMY_PASSWORD_HASH);
+            }
+            recordFailureAndThrow(tenantIdStr, loginType, username, resolvedIp);
+        }
+        if (!passwordProvided || !PasswordUtil.matches(rawPassword, authUser.getPasswordHash())) {
+            recordFailureAndThrow(tenantIdStr, loginType, username, resolvedIp);
+        }
+        if (!CommonStatusEnum.NORMAL.getCode().equals(authUser.getStatus())) {
+            throw new BusinessException(AuthResultCode.ACCOUNT_DISABLED);
+        }
+        if (PasswordUtil.needsUpgrade(authUser.getPasswordHash())) {
+            String upgradedHash = PasswordUtil.hash(rawPassword);
+            try {
+                TenantContextHolder.runWithTenant(
+                        tenantId,
+                        () -> remoteUserService.upgradePasswordHash(tenantId, authUser.getUserId(), upgradedHash)
+                );
+            } catch (RuntimeException ex) {
+                log.warn("平滑升级用户口令慢哈希失败，跳过本次写入: tenantId={}, userId={}",
+                        tenantId, authUser.getUserId(), ex);
+            }
+        }
+        return authUser;
     }
 
     private void verifyCaptchaIfEnabled(AuthGrantCommand command) {

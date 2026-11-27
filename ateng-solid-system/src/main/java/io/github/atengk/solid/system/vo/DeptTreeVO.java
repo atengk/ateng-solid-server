@@ -1,5 +1,7 @@
 package io.github.atengk.solid.system.vo;
 
+import io.github.atengk.boot.core.annotation.FieldSensitive;
+import io.github.atengk.boot.core.enums.SensitiveType;
 import lombok.Builder;
 import lombok.Value;
 
@@ -8,7 +10,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * 部门树节点响应视图对象（列表与选项统一返回内存明文及完整子节点数组）。
+ * 部门树节点响应视图对象（手机与邮箱出界序列化经 {@link FieldSensitive} 动态脱敏；编辑详情 {@link DeptVO} 保持真明文，返回完整子节点数组）。
  *
  * @author Ateng
  * @since 2026-11-25
@@ -58,13 +60,15 @@ public class DeptTreeVO {
     String leaderUsername;
 
     /**
-     * 联系电话（内存真明文，前端按展示/编辑分流）
+     * 联系电话（树列表响应经 {@link FieldSensitive} 动态脱敏）
      */
+    @FieldSensitive(SensitiveType.MOBILE_PHONE)
     String phone;
 
     /**
-     * 电子邮箱（内存真明文）
+     * 电子邮箱（树列表响应经 {@link FieldSensitive} 动态脱敏）
      */
+    @FieldSensitive(SensitiveType.EMAIL)
     String email;
 
     /**

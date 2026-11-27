@@ -131,6 +131,7 @@ class OrgAndRbacMockMvcTest {
             dept.setAncestors("0");
             dept.setDeptName("测试研发总部");
             dept.setPhone("13800008002");
+            dept.setEmail("dept8100@example.com");
             dept.setSort(1);
             dept.setStatus(CommonStatusEnum.NORMAL.getCode());
             sysDeptMapper.insert(dept);
@@ -194,10 +195,17 @@ class OrgAndRbacMockMvcTest {
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data[0].phone").doesNotExist());
 
+        mockMvc.perform(get("/admin/system/dept/tree").header("satoken-admin", viewerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data[0].phone").value("138****8002"))
+                .andExpect(jsonPath("$.data[0].email").value("d******0@example.com"));
+
         mockMvc.perform(get("/admin/system/dept/{id}", 8100L).header("satoken-admin", viewerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
-                .andExpect(jsonPath("$.data.phone").value("13800008002"));
+                .andExpect(jsonPath("$.data.phone").value("13800008002"))
+                .andExpect(jsonPath("$.data.email").value("dept8100@example.com"));
 
         mockMvc.perform(post("/admin/system/dept")
                         .header("satoken-admin", viewerToken)

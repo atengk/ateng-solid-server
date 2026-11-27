@@ -3,6 +3,7 @@ package io.github.atengk.solid.auth.service;
 import io.github.atengk.boot.core.code.CommonResultCode;
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.util.PasswordUtil;
+import io.github.atengk.boot.satoken.model.LoginUser;
 import io.github.atengk.boot.satoken.util.LoginHelper;
 import io.github.atengk.solid.auth.request.UpdatePasswordRequest;
 import io.github.atengk.solid.auth.request.UpdateProfileRequest;
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 /**
  * 个人中心领域服务：编排本人内存真明文资料读写、头像字节安全前置校验及零明文跨模块改密与全端强退。
@@ -89,6 +91,12 @@ public class ProfileService {
                 .gender(request.getGender())
                 .build();
         remoteUserService.updatePersonalProfile(ownerTenantId, userId, command);
+
+        LoginUser currentLoginUser = LoginHelper.getLoginUser(SolidConstants.ADMIN_LOGIN_TYPE);
+        if (currentLoginUser != null && !Objects.equals(currentLoginUser.getUserName(), command.getNickname())) {
+            currentLoginUser.setUserName(command.getNickname());
+            LoginHelper.setLoginUser(SolidConstants.ADMIN_LOGIN_TYPE, currentLoginUser);
+        }
     }
 
     /**
@@ -125,6 +133,9 @@ public class ProfileService {
         if (request == null || !StringUtils.hasText(request.getOldPassword())
                 || !StringUtils.hasText(request.getNewPassword())) {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "改密参数不能为空");
+        }
+        if (request.getNewPassword().equals(request.getOldPassword())) {
+            throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "新密码不能与当前密码相同");
         }
         Long ownerTenantId = AuthContextSupport.requireOwnerTenantId();
         Long userId = AuthContextSupport.requireCurrentUserId();

@@ -28,11 +28,10 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * 管理端认证服务：协调验证码前置下发、{@link AuthGrantHandler} 授权路由、{@code satoken-admin} 令牌签发注销及身份路由查询。
@@ -71,13 +70,22 @@ public class AuthService {
             TenantResolutionSupport tenantResolutionSupport,
             AuthAuditSupport authAuditSupport
     ) {
-        this.grantHandlerMap = grantHandlers == null
-                ? Collections.emptyMap()
-                : grantHandlers.stream().collect(Collectors.toUnmodifiableMap(
-                        AuthGrantHandler::getGrantType,
-                        Function.identity(),
-                        (existing, duplicate) -> existing
-                ));
+        if (grantHandlers == null || grantHandlers.isEmpty()) {
+            this.grantHandlerMap = Collections.emptyMap();
+        } else {
+            Map<String, AuthGrantHandler> handlerMap = new LinkedHashMap<>(grantHandlers.size());
+            for (AuthGrantHandler handler : grantHandlers) {
+                if (handler == null || !StringUtils.hasText(handler.getGrantType())) {
+                    throw new IllegalStateException("AuthGrantHandler 的 grantType 不能为空");
+                }
+                String grantType = handler.getGrantType().trim();
+                AuthGrantHandler previous = handlerMap.putIfAbsent(grantType, handler);
+                if (previous != null) {
+                    throw new IllegalStateException("检测到重复注册的 AuthGrantHandler grantType: " + grantType);
+                }
+            }
+            this.grantHandlerMap = Collections.unmodifiableMap(handlerMap);
+        }
         this.authProperties = authProperties;
         this.captchaTemplateProvider = captchaTemplateProvider;
         this.remoteUserService = remoteUserService;

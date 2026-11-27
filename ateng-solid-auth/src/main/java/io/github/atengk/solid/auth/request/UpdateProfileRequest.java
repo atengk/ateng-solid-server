@@ -1,7 +1,6 @@
 package io.github.atengk.solid.auth.request;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 import lombok.ToString;
@@ -26,13 +25,13 @@ public class UpdateProfileRequest implements Serializable {
      * 用户昵称
      */
     @NotBlank(message = "用户昵称不能为空")
-    @Size(max = 64, message = "用户昵称长度不能超过 64 个字符")
+    @Size(min = 2, max = 30, message = "用户昵称长度须在 2~30 个字符之间")
     private String nickname;
 
     /**
      * 电子邮箱（传空串或空白可清空绑定）
      */
-    @Size(max = 128, message = "电子邮箱长度不能超过 128 个字符")
+    @Size(max = 64, message = "电子邮箱长度不能超过 64 个字符")
     private String email;
 
     /**
@@ -42,9 +41,9 @@ public class UpdateProfileRequest implements Serializable {
     private String phone;
 
     /**
-     * 性别字典值（0=男，1=女，2=未知）
+     * 性别字典值（动态校验 {@code sys_user_gender} 启用字典项）
      */
     @NotBlank(message = "用户性别不能为空")
-    @Pattern(regexp = "^[012]$", message = "性别编码必须为 0、1 或 2")
+    @Size(max = 16, message = "性别编码长度不能超过 16 个字符")
     private String gender;
 }

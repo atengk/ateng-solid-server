@@ -28,7 +28,7 @@
 - **多租户、认证与脱敏**：
   - 租户隔离表及 4 张关联表携带 `tenant_id BIGINT NOT NULL DEFAULT 0` 并实现 `TenantAware<Long>`（默认租户 `0` / `'000000'`，默认关闭开关 `ateng.solid.tenant.enabled=false`）；免过滤表为 `sys_tenant`/`sys_tenant_package`/`sys_tenant_package_menu`/`sys_menu`/`sys_dict_type`/`sys_dict_data`/`flyway_schema_history`。
   - 管理端 `/admin/**` 绑定 `loginType="admin"`（请求头 `satoken-admin`）；超管角色收敛为 `super_admin`（严禁放行 `"admin"`）；仅租户 `0` 且 `super_admin` 可受控切换 `X-Tenant-Id`。
-  - 口令用 `PasswordUtil`，防爆破 `LoginFailureLockService` 键隔离 `tenantId:loginType:username`；内存保持真明文（持久化 `@FieldEncrypt`，展示/导出 `@Sensitive`/`@ExcelSensitive`）；关闭底座内置枚举端点（`ateng.boot.web.enum.endpoint-enabled=false`），自建 `/admin/system/enums`。
+  - 口令用 `PasswordUtil`，防爆破 `LoginFailureLockService` 键隔离 `tenantId:loginType:username`；持久化 `@FieldEncrypt`，列表/导出 `@FieldSensitive`/`@ExcelSensitive`，编辑详情保持真明文；关闭底座内置枚举端点（`ateng.boot.web.enum.endpoint-enabled=false`），自建 `/admin/system/enums`。
   - 扩展配置收口于 `@ConfigurationProperties(prefix = "ateng.solid.*")`，禁 `@RefreshScope` 与零散 `@Value`。
 
 ---

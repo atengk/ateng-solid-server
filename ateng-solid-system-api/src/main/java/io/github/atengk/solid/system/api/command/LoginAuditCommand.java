@@ -75,6 +75,11 @@ public class LoginAuditCommand implements Serializable {
     private Integer status;
 
     /**
+     * 审计动作类型（{@code LOGIN} / {@code LOGOUT}）
+     */
+    private String action;
+
+    /**
      * 提示消息摘要
      */
     private String message;

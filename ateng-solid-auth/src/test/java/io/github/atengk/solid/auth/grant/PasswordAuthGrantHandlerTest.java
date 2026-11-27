@@ -28,8 +28,12 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -277,14 +281,17 @@ class PasswordAuthGrantHandlerTest {
                 authProps, tenantProps, null, tenantService, userService, permService, lockService
         );
 
-        // 1. 账号不存在 -> 101002
+        // 1. 账号不存在 -> 101002，且应执行与 PBKDF2 校验同量级耗时的 Dummy 计算防时序枚举
         when(lockService.recordFailure("0", "admin", "ghost", TEST_IP)).thenReturn(4);
         AuthGrantCommand ghostCmd = baseCommand();
         ghostCmd.setUsername("ghost");
+        long ghostStartNs = System.nanoTime();
         assertThatThrownBy(() -> handler.authenticate(ghostCmd))
                 .isInstanceOf(BusinessException.class)
                 .extracting(ex -> ((BusinessException) ex).getCode())
                 .isEqualTo(AuthResultCode.BAD_CREDENTIALS.getCode());
+        long ghostElapsedMs = (System.nanoTime() - ghostStartNs) / 1_000_000L;
+        assertThat(ghostElapsedMs).isGreaterThan(30L);
 
         // 2. 密码错误未达阈值 -> 101002
         when(lockService.recordFailure("0", "admin", "alice", TEST_IP)).thenReturn(1);
@@ -377,5 +384,113 @@ class PasswordAuthGrantHandlerTest {
         assertThat(principal.getLoginType()).isEqualTo("admin");
         assertThat(principal.getRoles()).containsExactly("super_admin");
         verify(lockService).clearFailure("0", "admin", "alice");
+        verify(userService, never()).upgradePasswordHash(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    @DisplayName("低迭代 PBKDF2 历史哈希登录成功后应当平滑升级且不升级停用账号，写入异常时不影响本次登录")
+    void shouldSmoothlyUpgradeLegacyPasswordHashForNormalUserOnlyAndIgnoreUpgradeError() {
+        SolidAuthProperties authProps = new SolidAuthProperties();
+        authProps.setCaptchaEnabled(false);
+        SolidTenantProperties tenantProps = new SolidTenantProperties();
+        tenantProps.setEnabled(false);
+
+        RemoteTenantService tenantService = mock(RemoteTenantService.class);
+        when(tenantService.getTenantById(0L)).thenReturn(TenantAuthDTO.builder()
+                .tenantId(0L)
+                .tenantCode("000000")
+                .tenantName("平台默认租户")
+                .status(CommonStatusEnum.NORMAL.getCode())
+                .build());
+
+        String legacyHash = PasswordUtil.hash("Ateng@Alice1", 10_000);
+        RemoteUserService userService = mock(RemoteUserService.class);
+        when(userService.getAuthUserByUsername(0L, "alice")).thenReturn(AdminAuthUserDTO.builder()
+                .userId(101L)
+                .tenantId(0L)
+                .deptId(100L)
+                .username("alice")
+                .nickname("爱丽丝")
+                .passwordHash(legacyHash)
+                .status(CommonStatusEnum.NORMAL.getCode())
+                .build());
+        when(userService.getAuthUserByUsername(0L, "disabled_legacy")).thenReturn(AdminAuthUserDTO.builder()
+                .userId(102L)
+                .tenantId(0L)
+                .username("disabled_legacy")
+                .nickname("停用旧哈希")
+                .passwordHash(legacyHash)
+                .status(CommonStatusEnum.DISABLED.getCode())
+                .build());
+
+        RemotePermissionService permService = mock(RemotePermissionService.class);
+        when(permService.getRoleKeysByUserId(0L, 101L)).thenReturn(List.of("super_admin"));
+
+        LoginFailureLockService lockService = mock(LoginFailureLockService.class);
+        when(lockService.resolveClientIp(anyString())).thenReturn(TEST_IP);
+        when(lockService.isIpLocked(anyString())).thenReturn(false);
+        when(lockService.isLocked(anyString(), anyString(), anyString())).thenReturn(false);
+
+        PasswordAuthGrantHandler handler = createHandler(
+                authProps, tenantProps, null, tenantService, userService, permService, lockService
+        );
+
+        AuthenticatedPrincipal principal = handler.authenticate(baseCommand());
+        assertThat(principal.getUserId()).isEqualTo(101L);
+        verify(userService).upgradePasswordHash(
+                eq(0L),
+                eq(101L),
+                argThat(upgraded -> !PasswordUtil.needsUpgrade(upgraded) && PasswordUtil.matches("Ateng@Alice1", upgraded))
+        );
+
+        AuthGrantCommand disabledCmd = baseCommand();
+        disabledCmd.setUsername("disabled_legacy");
+        assertThatThrownBy(() -> handler.authenticate(disabledCmd))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).getCode())
+                .isEqualTo(AuthResultCode.ACCOUNT_DISABLED.getCode());
+        verify(userService, never()).upgradePasswordHash(eq(0L), eq(102L), anyString());
+
+        doThrow(new RuntimeException("db busy"))
+                .when(userService).upgradePasswordHash(eq(0L), eq(101L), anyString());
+        AuthenticatedPrincipal resilientPrincipal = handler.authenticate(baseCommand());
+        assertThat(resilientPrincipal.getUserId()).isEqualTo(101L);
+    }
+
+    @Test
+    @DisplayName("入口防御：非法 tenantCode 与负数 X-Tenant-Id 应当在调用 RemoteTenantService 前直接拦截抛 101005")
+    void shouldRejectMalformedTenantCodeAndNegativeTenantIdHeaderBeforeLookup() {
+        SolidAuthProperties authProps = new SolidAuthProperties();
+        authProps.setCaptchaEnabled(false);
+        SolidTenantProperties tenantProps = new SolidTenantProperties();
+        tenantProps.setEnabled(true);
+
+        RemoteTenantService tenantService = mock(RemoteTenantService.class);
+        RemoteUserService userService = mock(RemoteUserService.class);
+        RemotePermissionService permService = mock(RemotePermissionService.class);
+        LoginFailureLockService lockService = mock(LoginFailureLockService.class);
+
+        PasswordAuthGrantHandler handler = createHandler(
+                authProps, tenantProps, null, tenantService, userService, permService, lockService
+        );
+
+        for (String invalidCode : List.of("ab", "bad code!", "tenant#01", "a".repeat(33))) {
+            AuthGrantCommand badCodeCmd = baseCommand();
+            badCodeCmd.setTenantCode(invalidCode);
+            assertThatThrownBy(() -> handler.authenticate(badCodeCmd))
+                    .isInstanceOf(BusinessException.class)
+                    .extracting(ex -> ((BusinessException) ex).getCode())
+                    .isEqualTo(AuthResultCode.TENANT_UNAVAILABLE.getCode());
+        }
+
+        AuthGrantCommand negativeHeaderCmd = baseCommand();
+        negativeHeaderCmd.setTenantCode(null);
+        negativeHeaderCmd.setExtras(Map.of(TenantResolutionSupport.EXTRA_TENANT_ID_HEADER, "-1"));
+        assertThatThrownBy(() -> handler.authenticate(negativeHeaderCmd))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).getCode())
+                .isEqualTo(AuthResultCode.TENANT_UNAVAILABLE.getCode());
+
+        verifyNoInteractions(tenantService, userService, permService, lockService);
     }
 }

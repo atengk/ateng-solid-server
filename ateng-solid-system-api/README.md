@@ -1,6 +1,6 @@
 # ateng-solid-system-api 系统管理域纯 Java 跨模块契约模块
 
-> 一句话定位：定义系统管理域对外暴露的 4 个纯 Java `Remote*Service` 契约接口（15 方法）、跨模块 DTO/Command 模型、4 个系统级枚举与系统错误码段（`102000~102999`），实现单体模块隔离与微服务同源双装配。
+> 一句话定位：定义系统管理域对外暴露的 4 个纯 Java `Remote*Service` 契约接口（16 方法）、跨模块 DTO/Command 模型、4 个系统级枚举与系统错误码段（`102000~102999`），实现单体模块隔离与微服务同源双装配。
 
 ---
 
@@ -13,10 +13,10 @@
 | 系统枚举 | [`MenuTypeEnum`](./src/main/java/io/github/atengk/solid/system/api/enums/MenuTypeEnum.java) | `"M"` 目录 / `"C"` 菜单 / `"F"` 按钮 | 枚举别名 `menuType` | [`ConfigurationBaselineIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
 | 系统枚举 | [`ConfigTypeEnum`](./src/main/java/io/github/atengk/solid/system/api/enums/ConfigTypeEnum.java) | `"Y"` 系统内置 / `"N"` 业务自建 | 枚举别名 `configType` | [`ConfigurationBaselineIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
 | 系统枚举 | [`VisibleStatusEnum`](./src/main/java/io/github/atengk/solid/system/api/enums/VisibleStatusEnum.java) | `0` 显示 / `1` 隐藏 | 枚举别名 `visibleStatus` | [`ConfigurationBaselineIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
-| 用户契约 | [`RemoteUserService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteUserService.java) | 7 方法（认证查询、资料读写、头像、改密哈希） | 显式 `tenantId`；单查返 `null` 或抛 `102001`；禁明文密文回流 | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
+| 用户契约 | [`RemoteUserService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteUserService.java) | 8 方法（认证查询、资料读写、头像、改密/平滑升级哈希） | 显式 `tenantId`；单查返 `null` 或抛 `102001`；禁明文密文回流 | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
 | 租户契约 | [`RemoteTenantService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteTenantService.java) | 3 方法（按编码/主键查租户、可用性校验） | 返回 `TenantAuthDTO`（含 `isAvailableAt`）或 `boolean` | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
 | 权限契约 | [`RemotePermissionService`](./src/main/java/io/github/atengk/solid/system/api/service/RemotePermissionService.java) | 4 方法（角色、角色权限、直赋权限、动态路由树） | 集合查询无匹配保底返回空集合 `[]` | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
-| 审计契约 | [`RemoteAuditLogService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteAuditLogService.java) | 1 方法（`recordLoginAudit`） | 消费 `LoginAuditCommand`，幂等写登录日志并回写登录轨迹 | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
+| 审计契约 | [`RemoteAuditLogService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteAuditLogService.java) | 1 方法（`recordLoginAudit`） | 消费 `LoginAuditCommand`（含 `action`），幂等写日志并仅在登录成功时回写轨迹 | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
 
 ---
 
@@ -39,7 +39,7 @@
 ```mermaid
 flowchart LR
     AUTH["ateng-solid-auth"] -->|"仅依赖纯契约接口"| API["ateng-solid-system-api<br/>(Remote*Service / DTO / Command / Enum)"]
-    SYS["ateng-solid-system"] -->|"实现 15 个契约方法"| API
+    SYS["ateng-solid-system"] -->|"实现 16 个契约方法"| API
     CLOUD["ateng-solid-cloud-* (远期)"] -.->|"Dubbo / Feign 薄代理适配"| API
 ```
 
@@ -47,7 +47,7 @@ flowchart LR
 
 ## 3. 契约接口与传输模型清单
 
-### 3.1 `Remote*Service` 精确契约（共 15 方法）
+### 3.1 `Remote*Service` 精确契约（共 16 方法）
 
 1. **专属约定**：所有涉及租户隔离的方法均显式接收 `Long tenantId`（或 `ownerTenantId` 与 `effectiveTenantId`），由实现端在线程边界内显式定界。
 2. **契约方法签名汇总**：
@@ -58,9 +58,10 @@ flowchart LR
 | `RemoteUserService` | `AdminAuthUserDTO getAuthUserById(Long tenantId, Long userId)` | 不存在返回 `null` |
 | `RemoteUserService` | `AdminProfileDTO getAdminProfile(Long tenantId, Long userId)` | 不存在抛出 `102001` |
 | `RemoteUserService` | `PersonalProfileDTO getPersonalProfile(Long tenantId, Long userId)` | 不存在抛出 `102001` |
-| `RemoteUserService` | `void updatePersonalProfile(Long tenantId, Long userId, UpdatePersonalProfileCommand cmd)` | 手机号/邮箱同租户冲突抛出 `102002` |
+| `RemoteUserService` | `void updatePersonalProfile(Long tenantId, Long userId, UpdatePersonalProfileCommand cmd)` | 对齐昵称/联系/动态性别规则（`100001`）与同租户查重（`102002`） |
 | `RemoteUserService` | `AvatarUploadDTO uploadAvatar(Long tenantId, Long userId, UploadAvatarCommand cmd)` | 文件违规抛出 `100004`，用户缺失抛 `102001` |
-| `RemoteUserService` | `void updatePasswordHash(Long tenantId, Long userId, String encodedPassword, LocalDateTime pwdUpdateTime)` | 仅传输慢哈希密文；用户缺失抛 `102001` |
+| `RemoteUserService` | `void updatePasswordHash(Long tenantId, Long userId, String encodedPassword, LocalDateTime pwdUpdateTime)` | 仅传输慢哈希密文并刷新 `pwd_update_time`；用户缺失抛 `102001` |
+| `RemoteUserService` | `void upgradePasswordHash(Long tenantId, Long userId, String encodedPassword)` | 登录验密成功后平滑升级低迭代慢哈希（严禁改动 `pwd_update_time`） |
 | `RemoteTenantService` | `TenantAuthDTO getTenantByCode(String tenantCode)` | 不存在返回 `null` |
 | `RemoteTenantService` | `TenantAuthDTO getTenantById(Long tenantId)` | 不存在返回 `null` |
 | `RemoteTenantService` | `boolean isTenantAvailable(Long tenantId)` | 校验存在、未删、`status == 0` 且未过期 |
@@ -68,7 +69,7 @@ flowchart LR
 | `RemotePermissionService` | ``List<String> getPermissionsByRoleKey(Long tenantId, String roleKey)`` | 无匹配返回空集合 |
 | `RemotePermissionService` | ``List<String> getDirectPermissionsByUserId(Long tenantId, Long userId)`` | 无匹配返回空集合 |
 | `RemotePermissionService` | ``List<RouteMenuDTO> getRouteMenusByUserId(Long ownerTenantId, Long effectiveTenantId, Long userId, boolean superAdmin, boolean tenantEnabled)`` | 返回完成 `M`/`C` 树组装、停用与 `platform_only` 剪枝的菜单树 |
-| `RemoteAuditLogService` | `void recordLoginAudit(LoginAuditCommand cmd)` | 幂等落库 `sys_login_log`；登录成功回写用户最近登录态 |
+| `RemoteAuditLogService` | `void recordLoginAudit(LoginAuditCommand cmd)` | 幂等落库 `sys_login_log`；仅 `action != "LOGOUT"` 且 `status == 0 && userId != null` 回写最近登录态 |
 
 3. **边界防御**：
    - `AdminAuthUserDTO` 排除 `passwordHash` 的 `toString()` 序列化，确保慢哈希串不落入诊断日志；

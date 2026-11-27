@@ -9,7 +9,7 @@
 
 ## 1. 背景与实测事实
 
-`ateng-solid` 兼具“通用底座实战试金石”与“可直接二开的企业级开源后台框架”双定位，跨端契约要求敏感联系字段持久化加密收敛于底座 `@FieldEncrypt`，展示掩码收敛于 `@Sensitive` / `@ExcelSensitive` / 前端 `formatMask*`。
+`ateng-solid` 兼具“通用底座实战试金石”与“可直接二开的企业级开源后台框架”双定位，跨端契约要求敏感联系字段持久化加密收敛于底座 `@FieldEncrypt`，列表与导出展示掩码收敛于 `@FieldSensitive` / `@ExcelSensitive`（详见工作区 `ADR-0007`），编辑详情与个人中心保持内存真明文。
 
 经对 `ateng-boot-mybatis-plus` 源码一手核查，明确了以下不可回避的底层物理约束：
 1. 底座不存在拦截所有 SQL 参数与结果集的 MyBatis 全局加解密插件，持久层加密由 **`BaseTypeHandler<String>` + `@TableName(autoResultMap = true)`** 驱动；`@FieldEncrypt` 本身作为元数据标记驱动慢 SQL 脱敏、排序拦截与 `DynamicQueryHelper`；

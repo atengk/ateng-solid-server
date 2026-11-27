@@ -39,7 +39,7 @@
   - 全库租户隔离表及 4 张关联表（`sys_user_role`/`sys_user_post`/`sys_role_menu`/`sys_role_dept`）统一 `tenant_id BIGINT NOT NULL DEFAULT 0`；JSON 与 `X-Tenant-Id` 按字符串传递（默认 `"0"`），与 `ateng-boot` `DefaultTenantLineHandler`（`LongValue`）原生契合。
   - `000000` 固定为平台内置默认租户业务编码（`sys_tenant.tenant_code`）。
 - **时间与金额**：时间统一 `yyyy-MM-dd HH:mm:ss` 字符串；金额用后端 `BigDecimal` 平铺输出（禁科学计数法），前端用 `@atengk/core` 精度工具处理。
-- **内存真明文与脱敏**：除专供脱敏只读展示的字段外，接口与前端状态保持真明文；持久化加密收敛于 `@FieldEncrypt`，展示掩码收敛于 `@Sensitive` / `@ExcelSensitive` 或前端渲染层 `formatMask*`。
+- **列表脱敏与详情真明文（ADR-0007）**：高频列表与树形响应中的个人联系敏感字段（`UserVO` / `DeptTreeVO` 的 `phone`、`email`）由服务端通过 `@FieldSensitive` 动态出界脱敏，Excel 导出列采用 `@ExcelSensitive`；编辑详情（`GET /{id}`、`PersonalProfileVO`）及前端表单/状态保持内存真明文，持久化加密收敛于 `@FieldEncrypt`。
 
 ---
 

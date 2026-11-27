@@ -87,4 +87,14 @@ public interface RemoteUserService {
      * @throws BusinessException 目标用户不存在时抛出 {@code 102001}
      */
     void updatePasswordHash(Long tenantId, Long userId, String encodedPassword, LocalDateTime pwdUpdateTime);
+
+    /**
+     * 登录认证成功后平滑升级低迭代历史口令慢哈希密文，严禁改动 {@code pwd_update_time} 以避免干扰改密提醒状态。
+     *
+     * @param tenantId        显式定界的租户主键，不可为 {@code null}
+     * @param userId          用户主键
+     * @param encodedPassword 认证域使用最新安全参数重新计算后的口令慢哈希字符串
+     * @throws BusinessException 目标用户不存在时抛出 {@code 102001}
+     */
+    void upgradePasswordHash(Long tenantId, Long userId, String encodedPassword);
 }

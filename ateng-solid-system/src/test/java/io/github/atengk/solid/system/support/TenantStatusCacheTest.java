@@ -374,4 +374,33 @@ class TenantStatusCacheTest {
         assertThat(cache.getOrLoad(7007L, id -> dto)).isEqualTo(dto);
         verifyNoInteractions(redisCacheTemplate);
     }
+
+    @Test
+    @DisplayName("传入负数租户 ID 时应当直接返回 null，严禁回源或写入负向缓存哨兵")
+    void shouldRejectNegativeTenantIdWithoutCallingLoaderOrRedis() {
+        RedisCacheTemplate redisCacheTemplate = mock(RedisCacheTemplate.class);
+        TenantStatusCache redisBackedCache = new TenantStatusCache(
+                adaptiveSupport(null, redisCacheTemplate, emptyEnvProvider()),
+                defaultProps()
+        );
+        TenantStatusCache localCache = new TenantStatusCache(offlineAdaptiveSupport(), defaultProps());
+        AtomicInteger calls = new AtomicInteger();
+
+        for (Long invalidId : new Long[]{-1L, -999L, Long.MIN_VALUE}) {
+            assertThat(redisBackedCache.getOrLoad(invalidId, id -> {
+                calls.incrementAndGet();
+                return new TenantAuthDTO();
+            })).isNull();
+            assertThat(localCache.getOrLoad(invalidId, id -> {
+                calls.incrementAndGet();
+                return new TenantAuthDTO();
+            })).isNull();
+            redisBackedCache.evict(invalidId);
+            localCache.evict(invalidId);
+        }
+
+        assertThat(calls.get()).isZero();
+        assertThat(localCache.localSize()).isZero();
+        verifyNoInteractions(redisCacheTemplate);
+    }
 }

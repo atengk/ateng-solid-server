@@ -59,7 +59,7 @@
 - 查找单条记录不存在时返回 `null`（防登录枚举）或按语义抛出 `BusinessException(SystemResultCode.RECORD_NOT_FOUND)`，集合查询无匹配保底返回空集合 `Collections.emptyList()`；
 - **零明文密码跨模块传输**：个人改密时旧密码验证（抛 `AuthResultCode(101006)`）与新密码复杂度校验/PBKDF2 慢哈希全部在 `ateng-solid-auth` 完成，仅将慢哈希串经 `updatePasswordHash` 交由 `system` 落库。
 
-### 4.2 4 个 `Remote*Service` 精确方法清单（共 15 方法）
+### 4.2 4 个 `Remote*Service` 精确方法清单（共 16 方法）
 
 | 契约接口 | 方法签名 | 返回空/异常约定与核心职责 |
 | :--- | :--- | :--- |
@@ -67,9 +67,10 @@
 | | `AdminAuthUserDTO getAuthUserById(Long tenantId, Long userId)` | 不存在返回 `null`；供改密核对旧哈希 |
 | | `AdminProfileDTO getAdminProfile(Long tenantId, Long userId)` | 不存在抛 `102001`；返回 `/admin/auth/info` 轻量摘要（含动态签发 `inline` `avatarUrl`、`tenantName`、`pwdUpdateTime`、`loginIp`、`loginDate`） |
 | | `PersonalProfileDTO getPersonalProfile(Long tenantId, Long userId)` | 不存在抛 `102001`；返回 `/admin/auth/profile` 完整内存真明文资料（含 `email`/`phone`/`gender`/`deptName`/`postNames`/`roles`/`avatarUrl`/`createTime`） |
-| | `void updatePersonalProfile(Long tenantId, Long userId, UpdatePersonalProfileCommand cmd)` | 校验同租户手机号/邮箱唯一性（`102002`）、空串归一 `null` 与邮箱小写归一化 |
+| | `void updatePersonalProfile(Long tenantId, Long userId, UpdatePersonalProfileCommand cmd)` | 校验昵称（2~30）、手机号/邮箱格式、动态 `sys_user_gender` 字典（`100001`）与同租户查重（`102002`） |
 | | `AvatarUploadDTO uploadAvatar(Long tenantId, Long userId, UploadAvatarCommand cmd)` | 入参 `originalFilename`/`contentType`/`byte[] content`（零 `MultipartFile`）；单事务内魔数校验 + `uploadWithRollbackDelete` + 写 `sys_user.avatar` + `deleteAfterCommit` + 返回 `inline` 预签名 `avatarUrl` |
 | | `void updatePasswordHash(Long tenantId, Long userId, String encodedPassword, LocalDateTime pwdUpdateTime)` | 落库新 PBKDF2 慢哈希与 `pwd_update_time` |
+| | `void upgradePasswordHash(Long tenantId, Long userId, String encodedPassword)` | 登录验密成功后平滑升级低迭代 PBKDF2 慢哈希（不改动 `pwd_update_time`） |
 | **`RemoteTenantService`** | `TenantAuthDTO getTenantByCode(String tenantCode)` | 不存在返回 `null`；含 `tenantId`, `tenantCode`, `tenantName`, `packageId`, `expireTime`, `status` |
 | | `TenantAuthDTO getTenantById(Long tenantId)` | 不存在返回 `null` |
 | | `boolean isTenantAvailable(Long tenantId)` | 校验存在、未删、`status == 0` 且未过 `expireTime` |
@@ -77,9 +78,9 @@
 | | `List<String> getPermissionsByRoleKey(Long tenantId, String roleKey)` | 无匹配返回 `[]`；支持租户维度角色权限隔离缓存 |
 | | `List<String> getDirectPermissionsByUserId(Long tenantId, Long userId)` | 首期保底返回 `[]` |
 | | `List<RouteMenuDTO> getRouteMenusByUserId(Long ownerTenantId, Long effectiveTenantId, Long userId, boolean superAdmin, boolean tenantEnabled)` | 无匹配返回 `[]`；在 `system` 内统一完成 `M`/`C` 树组装、停用剪枝、`platform_only` 与 `tenantEnabled` 过滤 |
-| **`RemoteAuditLogService`** | `void recordLoginAudit(LoginAuditCommand cmd)` | 幂等写入 `sys_login_log`（复用 `UserAgentUtil.parse` 解析 `browser`/`os`）；若 `status == 0 && userId != null` 同步更新 `sys_user.login_ip` 与 `login_date` |
+| **`RemoteAuditLogService`** | `void recordLoginAudit(LoginAuditCommand cmd)` | 幂等写入 `sys_login_log`（复用 `UserAgentUtil.parse` 解析 `browser`/`os`）；仅 `action != "LOGOUT"` 且 `status == 0 && userId != null` 时同步更新 `sys_user.login_ip` 与 `login_date` |
 
 ### 4.3 跨模块领域事件与认证策略 SPI（`ateng-solid-common`）
 - **`DomainEventPublisher`**（`io.github.atengk.solid.common.event`）：提供 `publish(DomainEvent)` 与 `publishAfterCommit(DomainEvent)`；默认由 `SpringDomainEventPublisher`（基于 `ApplicationEventPublisher` + `AFTER_COMMIT` + `AsyncContext` 四维透传）装配，`Spec 5` 微服务壳通过 `@Primary` 适配器无侵入替换。
-- **首期唯一跨模块异步事件 `LoginAuditEvent`**：携带 `eventId`、`occurredAt`、`tenantId`、`traceId`、`userId`（可空）、`username`、`loginType`、`clientIp`、`userAgent`、`status`、`message`；`auth` 发布后由 `system` 异步监听器转调 `RemoteAuditLogService.recordLoginAudit`。
+- **首期唯一跨模块异步事件 `LoginAuditEvent`**：携带 `eventId`、`occurredAt`、`tenantId`、`traceId`、`userId`（可空）、`username`、`loginType`、`action`（`"LOGIN"`/`"LOGOUT"`）、`clientIp`、`userAgent`、`status`、`message`；`auth` 发布后由 `system` 异步监听器转调 `RemoteAuditLogService.recordLoginAudit`。
 - **`AuthGrantHandler` SPI**（`io.github.atengk.solid.common.spi.auth`）：`String getGrantType()` + `AuthenticatedPrincipal authenticate(AuthGrantCommand command)`；`AuthService` 按 `grantType` 路由调用并负责 Sa-Token 签发与事件发布，图形验证码/租户解析/防爆破/账密核验内聚在 `PasswordAuthGrantHandler` 中。

@@ -67,7 +67,7 @@ public class TenantStatusCache {
      * @return 租户认证载荷；租户不存在时返回 {@code null}
      */
     public TenantAuthDTO getOrLoad(Long tenantId, LongFunction<TenantAuthDTO> loader) {
-        if (tenantId == null) {
+        if (tenantId == null || tenantId < 0L) {
             return null;
         }
         Objects.requireNonNull(loader, "loader 不能为空");
@@ -86,7 +86,7 @@ public class TenantStatusCache {
      * @param tenantId 租户主键
      */
     public void evict(Long tenantId) {
-        if (tenantId == null) {
+        if (tenantId == null || tenantId < 0L) {
             return;
         }
         adaptiveRedisSupport.evictL2(buildCacheKey(tenantId), () -> localFallback.remove(tenantId));

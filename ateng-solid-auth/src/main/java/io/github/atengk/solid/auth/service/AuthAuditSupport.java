@@ -2,7 +2,6 @@ package io.github.atengk.solid.auth.service;
 
 import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.web.trace.TraceUtil;
-import io.github.atengk.solid.auth.result.AuthResultCode;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.LogStatusEnum;
 import io.github.atengk.solid.common.event.DomainEventPublisher;
@@ -13,8 +12,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
-
-import java.util.Objects;
 
 /**
  * 认证域登录与登出审计事件发布协作者，统一收敛成功、失败与注销全链路 {@link LoginAuditEvent} 装配与租户归属兜底。
@@ -53,6 +50,7 @@ public class AuthAuditSupport {
                 .clientIp(clientIp)
                 .userAgent(userAgent)
                 .status(LogStatusEnum.SUCCESS.getCode())
+                .action(LoginAuditEvent.ACTION_LOGIN)
                 .message("登录成功")
                 .build());
     }
@@ -68,7 +66,7 @@ public class AuthAuditSupport {
             return;
         }
         try {
-            Long tenantId = resolveFailureTenantId(command, cause);
+            Long tenantId = tenantResolutionSupport.resolveTenantIdForAudit(command);
             String message = resolveFailureMessage(cause);
             String username = StringUtils.hasText(command.getUsername()) ? command.getUsername().trim() : "";
 
@@ -81,6 +79,7 @@ public class AuthAuditSupport {
                     .clientIp(command.getClientIp())
                     .userAgent(command.getUserAgent())
                     .status(LogStatusEnum.FAIL.getCode())
+                    .action(LoginAuditEvent.ACTION_LOGIN)
                     .message(truncateMessage(message))
                     .build());
         } catch (RuntimeException auditEx) {
@@ -114,16 +113,9 @@ public class AuthAuditSupport {
                 .clientIp(clientIp)
                 .userAgent(userAgent)
                 .status(LogStatusEnum.SUCCESS.getCode())
+                .action(LoginAuditEvent.ACTION_LOGOUT)
                 .message("退出登录成功")
                 .build());
-    }
-
-    private Long resolveFailureTenantId(AuthGrantCommand command, Exception cause) {
-        if (cause instanceof BusinessException be
-                && Objects.equals(AuthResultCode.CAPTCHA_INVALID.getCode(), be.getCode())) {
-            return SolidConstants.PLATFORM_TENANT_ID;
-        }
-        return tenantResolutionSupport.resolveTenantIdForAudit(command);
     }
 
     private static String resolveFailureMessage(Exception cause) {

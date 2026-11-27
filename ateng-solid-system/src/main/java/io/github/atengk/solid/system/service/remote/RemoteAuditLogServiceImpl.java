@@ -7,6 +7,7 @@ import io.github.atengk.boot.core.model.UserAgentInfo;
 import io.github.atengk.boot.core.util.UserAgentUtil;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.LogStatusEnum;
+import io.github.atengk.solid.common.event.LoginAuditEvent;
 import io.github.atengk.solid.system.api.command.LoginAuditCommand;
 import io.github.atengk.solid.system.api.service.RemoteAuditLogService;
 import io.github.atengk.solid.system.entity.SysLoginLog;
@@ -117,7 +118,7 @@ public class RemoteAuditLogServiceImpl implements RemoteAuditLogService {
             loginLog.setLoginTime(loginTime);
             sysLoginLogMapper.insert(loginLog);
 
-            if (LogStatusEnum.SUCCESS.getCode().equals(status) && cmd.getUserId() != null) {
+            if (shouldUpdateLastLogin(cmd, status)) {
                 sysUserMapper.update(
                         new SysUser(),
                         Wrappers.<SysUser>lambdaUpdate()
@@ -128,6 +129,14 @@ public class RemoteAuditLogServiceImpl implements RemoteAuditLogService {
                 );
             }
         }));
+    }
+
+    private static boolean shouldUpdateLastLogin(LoginAuditCommand cmd, Integer status) {
+        if (!LogStatusEnum.SUCCESS.getCode().equals(status) || cmd.getUserId() == null) {
+            return false;
+        }
+        String normalizedAction = StringUtils.hasText(cmd.getAction()) ? cmd.getAction().trim() : null;
+        return normalizedAction == null || LoginAuditEvent.ACTION_LOGIN.equalsIgnoreCase(normalizedAction);
     }
 
     private static String formatClientMetric(String name, String version) {

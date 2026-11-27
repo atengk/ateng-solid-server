@@ -13,6 +13,7 @@ import io.github.atengk.boot.satoken.defense.LoginFailureLockService;
 import io.github.atengk.boot.satoken.model.LoginUser;
 import io.github.atengk.boot.satoken.util.LoginHelper;
 import io.github.atengk.solid.auth.result.AuthResultCode;
+import io.github.atengk.solid.auth.security.OpaqueSessionHandleCodec;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
 import io.github.atengk.solid.system.entity.SysDept;
@@ -47,7 +48,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -92,6 +95,8 @@ class AuthFlowMockMvcTest {
     private ObjectMapper objectMapper;
     @Autowired
     private LoginFailureLockService loginFailureLockService;
+    @Autowired
+    private OpaqueSessionHandleCodec opaqueSessionHandleCodec;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
@@ -394,6 +399,16 @@ class AuthFlowMockMvcTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "oldPassword", "Ateng@Test2026",
+                                "newPassword", "Ateng@Test2026"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(100001));
+
+        mockMvc.perform(put("/admin/auth/password")
+                        .header("satoken-admin", superAdminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "oldPassword", "Ateng@Test2026",
                                 "newPassword", "Ateng@New2026"
                         ))))
                 .andExpect(status().isOk())
@@ -410,14 +425,28 @@ class AuthFlowMockMvcTest {
         );
         assertThat(pwdUpdateTime).isNotNull();
 
-        String newToken = loginAndGetToken("superadmin", "Ateng@New2026");
+        MvcResult loginResult2 = mockMvc.perform(post("/admin/auth/login")
+                        .header("X-Forwarded-For", "198.51.100.88")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "superadmin",
+                                "password", "Ateng@New2026"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andReturn();
+        String newToken = objectMapper.readTree(loginResult2.getResponse().getContentAsString())
+                .path("data").path("tokenValue").asText();
         mockMvc.perform(get("/admin/auth/info")
                         .header("satoken-admin", newToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.passwordNeedsChange").value(false));
 
+        awaitSuperAdminLoginIp("198.51.100.88");
+
         mockMvc.perform(post("/admin/auth/logout")
+                        .header("X-Forwarded-For", "198.51.100.99")
                         .header("satoken-admin", newToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200));
@@ -428,6 +457,133 @@ class AuthFlowMockMvcTest {
                 .andExpect(jsonPath("$.code").value(401));
 
         awaitLoginAuditLogs();
+        String loginIpAfterLogout = jdbcTemplate.queryForObject(
+                "SELECT login_ip FROM sys_user WHERE tenant_id = 0 AND username = 'superadmin' AND deleted = 0",
+                String.class
+        );
+        assertThat(loginIpAfterLogout).isEqualTo("198.51.100.88");
+    }
+
+    @Test
+    @Order(6)
+    @DisplayName("is-share=false 时同账号多端登录应签发独立令牌支持单端登出/强退，且在线分页超大页码应安全返回空分页")
+    void shouldIssueIndependentSessionTokensAndGuardOnlinePageOverflow() throws Exception {
+        String viewerTokenA = loginAndGetToken("viewer_user", "Ateng@Viewer1");
+        String viewerTokenB = loginAndGetToken("viewer_user", "Ateng@Viewer1");
+        assertThat(viewerTokenA).isNotBlank().isNotEqualTo(viewerTokenB);
+
+        String adminTokenA = loginAndGetToken("superadmin", "Ateng@New2026");
+        String adminTokenB = loginAndGetToken("superadmin", "Ateng@New2026");
+        assertThat(adminTokenA).isNotBlank().isNotEqualTo(adminTokenB);
+
+        try {
+            // 1. 单端登出 viewerTokenA，同账号另一端 viewerTokenB 仍保持有效
+            mockMvc.perform(post("/admin/auth/logout")
+                            .header("satoken-admin", viewerTokenA))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+
+            mockMvc.perform(get("/admin/auth/info")
+                            .header("satoken-admin", viewerTokenA))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(401));
+            mockMvc.perform(get("/admin/auth/info")
+                            .header("satoken-admin", viewerTokenB))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+
+            // 2. 在线会话列表中同账号双端会话独立可见，adminTokenA 强退 adminTokenB 不触发自杀保护 101007
+            MvcResult listRes = mockMvc.perform(get("/admin/auth/online/page")
+                            .header("satoken-admin", adminTokenA)
+                            .param("username", "superadmin")
+                            .param("current", "1")
+                            .param("size", "100"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andReturn();
+            JsonNode records = objectMapper.readTree(listRes.getResponse().getContentAsString())
+                    .path("data").path("records");
+            String expectedOtherMask = opaqueSessionHandleCodec.maskToken(adminTokenB);
+            String otherAdminSessionId = null;
+            for (JsonNode item : records) {
+                if (!item.path("currentSession").asBoolean()
+                        && expectedOtherMask.equals(item.path("tokenMask").asText())) {
+                    otherAdminSessionId = item.path("sessionId").asText();
+                    break;
+                }
+            }
+            assertThat(otherAdminSessionId).isNotBlank();
+
+            mockMvc.perform(delete("/admin/auth/online/{sessionId}", otherAdminSessionId)
+                            .header("satoken-admin", adminTokenA))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+
+            mockMvc.perform(get("/admin/auth/info")
+                            .header("satoken-admin", adminTokenB))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(401));
+            mockMvc.perform(get("/admin/auth/info")
+                            .header("satoken-admin", adminTokenA))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+
+            // 3. 超出 Integer.MAX_VALUE 或超出最大扫描窗口的页码应当安全返回空记录分页且保持请求页码
+            long overflowCurrent = (long) Integer.MAX_VALUE + 1L;
+            mockMvc.perform(get("/admin/auth/online/page")
+                            .header("satoken-admin", adminTokenA)
+                            .param("current", String.valueOf(overflowCurrent))
+                            .param("size", "100"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andExpect(jsonPath("$.data.records").isEmpty())
+                    .andExpect(jsonPath("$.data.current").value(overflowCurrent));
+
+            mockMvc.perform(get("/admin/auth/online/page")
+                            .header("satoken-admin", adminTokenA)
+                            .param("current", "21")
+                            .param("size", "100"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andExpect(jsonPath("$.data.records").isEmpty())
+                    .andExpect(jsonPath("$.data.current").value(21));
+        } finally {
+            mockMvc.perform(post("/admin/auth/logout").header("satoken-admin", viewerTokenB));
+            mockMvc.perform(post("/admin/auth/logout").header("satoken-admin", adminTokenA));
+        }
+    }
+
+    @Test
+    @Order(7)
+    @DisplayName("低迭代历史 PBKDF2 口令登录成功后应当平滑升级至 310000 次且不改动 pwd_update_time")
+    void shouldUpgradeLegacyLowIterationHashWithoutTouchingPwdUpdateTime() throws Exception {
+        String legacyHash = PasswordUtil.hash("Ateng@Viewer1", 10_000);
+        LocalDateTime fixedPwdUpdateTime = LocalDateTime.of(2026, 1, 1, 8, 0, 0);
+        jdbcTemplate.update(
+                "UPDATE sys_user SET password = ?, pwd_update_time = ? WHERE id = ? AND tenant_id = 0",
+                legacyHash, Timestamp.valueOf(fixedPwdUpdateTime), USER_VIEWER_ID
+        );
+
+        String token = loginAndGetToken("viewer_user", "Ateng@Viewer1");
+        try {
+            String upgradedHash = jdbcTemplate.queryForObject(
+                    "SELECT password FROM sys_user WHERE id = ? AND tenant_id = 0",
+                    String.class,
+                    USER_VIEWER_ID
+            );
+            Timestamp currentPwdUpdateTime = jdbcTemplate.queryForObject(
+                    "SELECT pwd_update_time FROM sys_user WHERE id = ? AND tenant_id = 0",
+                    Timestamp.class,
+                    USER_VIEWER_ID
+            );
+            assertThat(upgradedHash).startsWith("$pbkdf2-sha256$310000$");
+            assertThat(PasswordUtil.needsUpgrade(upgradedHash)).isFalse();
+            assertThat(PasswordUtil.matches("Ateng@Viewer1", upgradedHash)).isTrue();
+            assertThat(currentPwdUpdateTime).isNotNull();
+            assertThat(currentPwdUpdateTime.toLocalDateTime()).isEqualTo(fixedPwdUpdateTime);
+        } finally {
+            mockMvc.perform(post("/admin/auth/logout").header("satoken-admin", token));
+        }
     }
 
     @Test
@@ -469,6 +625,22 @@ class AuthFlowMockMvcTest {
                 .andReturn();
         return objectMapper.readTree(res.getResponse().getContentAsString())
                 .path("data").path("tokenValue").asText();
+    }
+
+    private void awaitSuperAdminLoginIp(String expectedIp) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + Duration.ofSeconds(5).toMillis();
+        String actualIp = null;
+        while (System.currentTimeMillis() < deadline) {
+            actualIp = jdbcTemplate.queryForObject(
+                    "SELECT login_ip FROM sys_user WHERE tenant_id = 0 AND username = 'superadmin' AND deleted = 0",
+                    String.class
+            );
+            if (expectedIp.equals(actualIp)) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        assertThat(actualIp).isEqualTo(expectedIp);
     }
 
     private void awaitLoginAuditLogs() throws InterruptedException {

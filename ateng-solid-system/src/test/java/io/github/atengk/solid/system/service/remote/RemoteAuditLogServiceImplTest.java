@@ -8,6 +8,7 @@ import io.github.atengk.boot.redis.idempotent.enums.IdempotentStatus;
 import io.github.atengk.boot.redis.properties.RedisProperties;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.LogStatusEnum;
+import io.github.atengk.solid.common.event.LoginAuditEvent;
 import io.github.atengk.solid.system.api.command.LoginAuditCommand;
 import io.github.atengk.solid.system.entity.SysLoginLog;
 import io.github.atengk.solid.system.entity.SysUser;
@@ -253,5 +254,38 @@ class RemoteAuditLogServiceImplTest {
             service.recordLoginAudit(sampleCommand("cap-evt-" + i));
         }
         assertThat(service.localDedupSize()).isLessThanOrEqualTo(AdaptiveRedisSupport.DEFAULT_LOCAL_MAX_CAPACITY);
+    }
+
+    @Test
+    @DisplayName("action=LOGOUT 成功审计应当仅记录登录日志，绝不回写 sys_user 最近登录 IP 与时间")
+    void shouldNotOverwriteUserLastLoginWhenActionIsLogout() {
+        SysLoginLogMapper loginLogMapper = mock(SysLoginLogMapper.class);
+        SysUserMapper userMapper = mock(SysUserMapper.class);
+        RemoteAuditLogServiceImpl service = new RemoteAuditLogServiceImpl(
+                loginLogMapper,
+                userMapper,
+                immediateTxTemplate(),
+                adaptiveWithIdempotent(null, emptyEnvProvider())
+        );
+
+        LoginAuditCommand logoutCmd = LoginAuditCommand.builder()
+                .eventId("evt-logout-1")
+                .occurredAt(LocalDateTime.of(2026, 11, 27, 9, 0, 0))
+                .tenantId(1001L)
+                .traceId("trace-logout-1")
+                .userId(9001L)
+                .username("alice")
+                .loginType(SolidConstants.ADMIN_LOGIN_TYPE)
+                .clientIp("203.0.113.99")
+                .userAgent("Mozilla/5.0 Chrome/131.0")
+                .status(LogStatusEnum.SUCCESS.getCode())
+                .action(LoginAuditEvent.ACTION_LOGOUT)
+                .message("退出登录成功")
+                .build();
+
+        service.recordLoginAudit(logoutCmd);
+
+        verify(loginLogMapper, times(1)).insert(any(SysLoginLog.class));
+        verifyNoInteractions(userMapper);
     }
 }

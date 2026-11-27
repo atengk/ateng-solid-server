@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 认证域租户解析与可用性校验协作者：兼容 {@code tenantCode} 与 {@code X-Tenant-Id} 请求头两种登录入口参数，并复用至登录校验与失败审计兜底。
@@ -31,6 +32,7 @@ public class TenantResolutionSupport {
     public static final String EXTRA_TENANT_ID_HEADER = "tenantIdHeader";
 
     private static final String DEFAULT_TENANT_NAME = "平台默认租户";
+    private static final Pattern TENANT_CODE_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{4,32}$");
 
     private final SolidTenantProperties tenantProperties;
     private final RemoteTenantService remoteTenantService;
@@ -98,12 +100,16 @@ public class TenantResolutionSupport {
     private TenantAuthDTO lookupTenantByCommand(AuthGrantCommand command) {
         String tenantCode = command != null ? command.getTenantCode() : null;
         if (StringUtils.hasText(tenantCode)) {
-            return remoteTenantService.getTenantByCode(tenantCode.trim());
+            String normalizedCode = tenantCode.trim();
+            if (!TENANT_CODE_PATTERN.matcher(normalizedCode).matches()) {
+                return null;
+            }
+            return remoteTenantService.getTenantByCode(normalizedCode);
         }
         String headerTenantId = extractHeaderTenantId(command);
         if (StringUtils.hasText(headerTenantId)) {
             Long parsedId = AuthContextSupport.parseLongOrNull(headerTenantId);
-            return parsedId != null ? remoteTenantService.getTenantById(parsedId) : null;
+            return parsedId != null && parsedId >= 0L ? remoteTenantService.getTenantById(parsedId) : null;
         }
         return remoteTenantService.getTenantByCode(SolidConstants.DEFAULT_TENANT_CODE);
     }

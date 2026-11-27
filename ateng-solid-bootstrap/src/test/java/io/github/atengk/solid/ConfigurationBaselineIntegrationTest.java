@@ -123,6 +123,7 @@ class ConfigurationBaselineIntegrationTest {
 
         assertThat(saTokenProperties.getPrimaryLoginType()).isEqualTo("admin");
         assertThat(saTokenProperties.getSuperAdminRoles()).containsExactly("super_admin");
+        assertThat(saTokenProperties.getToken().isShare()).isFalse();
         assertThat(saTokenProperties.getPermissionCache().isTenantScoped()).isTrue();
         assertThat(saTokenProperties.getTenant().getHeaderName()).isEqualTo("X-Tenant-Id");
         assertThat(saTokenProperties.getTenant().isAllowAnonymousHeader()).isFalse();

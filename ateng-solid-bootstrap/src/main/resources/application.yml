@@ -174,7 +174,7 @@ ateng:
         timeout: 24h
         active-timeout: 30m
         is-concurrent: true
-        is-share: true
+        is-share: false
         token-style: uuid
       permission-cache:
         tenant-scoped: true

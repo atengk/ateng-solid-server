@@ -16,6 +16,7 @@ import io.github.atengk.solid.system.mapper.SysDictTypeMapper;
 import io.github.atengk.solid.system.request.DictDataQueryRequest;
 import io.github.atengk.solid.system.request.DictTypeQueryRequest;
 import io.github.atengk.solid.system.support.DictDataCache;
+import io.github.atengk.solid.system.support.DictValidationSupport;
 import io.github.atengk.solid.system.support.SystemContextSupport;
 import io.github.atengk.solid.system.vo.DictDataVO;
 import io.github.atengk.solid.system.vo.DictTypeOptionVO;
@@ -171,7 +172,7 @@ public class SysDictQueryService {
      */
     public List<DictDataVO> listActiveDataByType(String dictType) {
         String normalizedType = SystemContextSupport.trimToNull(dictType);
-        if (normalizedType == null) {
+        if (!DictValidationSupport.isValidDictTypeFormat(normalizedType)) {
             return Collections.emptyList();
         }
         return dictDataCache.getOrLoad(normalizedType, this::loadActiveDataFromDb);
