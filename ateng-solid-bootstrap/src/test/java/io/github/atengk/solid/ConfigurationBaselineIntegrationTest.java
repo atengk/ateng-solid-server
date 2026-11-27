@@ -175,6 +175,9 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(webProperties.getShutdown().getDrainTimeout()).isEqualTo(Duration.ZERO);
         assertThat(webProperties.getPayloadLog().isEnabled()).isFalse();
         assertThat(webProperties.getCors().isEnabled()).isFalse();
+        assertThat(webProperties.getTrustedProxies()).isEmpty();
+        assertThat(webProperties.getOperateLog().getDefaultExcludeParams())
+                .contains("password", "phone", "email", "adminPassword", "configValue");
         RateLimiterProperties rateLimiterProperties = Binder.get(environment)
                 .bind("ateng.boot.web.ratelimit", RateLimiterProperties.class)
                 .get();
@@ -251,6 +254,11 @@ class ConfigurationBaselineIntegrationTest {
                 .isEqualTo("${SOLID_LOG_FILE_ENABLED:true}");
         assertThat(prod.getProperty("ateng.boot.web.payload-log.enabled")).isEqualTo(false);
         assertThat(prod.getProperty("ateng.boot.mybatis-plus.sql-log.enabled")).isEqualTo(false);
+        assertThat(prod.getProperty("ateng.boot.core.slow-alert.include-args")).isEqualTo(false);
+        assertThat(prod.getProperty("ateng.boot.web.trusted-proxies")).isEqualTo("${SOLID_TRUSTED_PROXIES:}");
+        assertThat(prod.getProperty("ateng.boot.mybatis-plus.tenant.enabled")).isEqualTo("${SOLID_TENANT_ENABLED:false}");
+        assertThat(prod.getProperty("ateng.solid.init.super-admin-password"))
+                .isEqualTo("${SOLID_INIT_SUPER_ADMIN_PASSWORD}");
     }
 
     @Test

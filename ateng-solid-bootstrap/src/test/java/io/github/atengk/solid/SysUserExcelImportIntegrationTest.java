@@ -32,6 +32,9 @@ import io.github.atengk.solid.system.mapper.SysTenantPackageMenuMapper;
 import io.github.atengk.solid.system.mapper.SysUserMapper;
 import io.github.atengk.solid.system.mapper.SysUserPostMapper;
 import io.github.atengk.solid.system.mapper.SysUserRoleMapper;
+import io.github.atengk.solid.system.service.UserBatchPersistHelper;
+import io.github.atengk.solid.system.service.UserBatchPersistHelper.PreparedImportUser;
+import io.github.atengk.solid.system.service.UserImportValidator.ValidatedImportRow;
 import org.apache.poi.ss.usermodel.DataValidation;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -150,6 +153,8 @@ class SysUserExcelImportIntegrationTest {
     private SysUserPostMapper sysUserPostMapper;
     @Autowired
     private SysUserRoleMapper sysUserRoleMapper;
+    @Autowired
+    private UserBatchPersistHelper userBatchPersistHelper;
 
     @BeforeAll
     void setUpFixtures() {
@@ -541,6 +546,66 @@ class SysUserExcelImportIntegrationTest {
             assertThat(future2.get(60, TimeUnit.SECONDS)).isEqualTo(CommonResultCode.TOO_MANY_REQUESTS.getCode());
         } finally {
             pool.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("非 ALL 角色导入受 @DataScope 部门约束，且阶段 3 落库事务会拦截期间被停用的部门/岗位/角色")
+    void shouldEnforceDataScopeOnImportAndRejectDisabledReferencesInPersistStage() throws Exception {
+        long scopedRoleId = 32391L;
+        long scopedUserId = 32491L;
+        TenantContextHolder.runWithTenant(TENANT_ID, () -> {
+            insertRole(TENANT_ID, scopedRoleId, "华东导入主管", "east_imp_mgr", DataScopeType.DEPT_AND_CHILD,
+                    CommonStatusEnum.NORMAL, List.of(1000L, 1100L, 1101L, 1105L));
+            insertUser(TENANT_ID, scopedUserId, DEPT_EAST, "east_importer", "华东导入员",
+                    "Ateng@ImpEast", null, null, scopedRoleId);
+        });
+
+        try {
+            String scopedToken = loginAndGetToken("T32002", "east_importer", "Ateng@ImpEast");
+            byte[] mixedScopeBytes = buildStandardWorkbook(List.of(
+                    // row 2: 属于 DEPT_EAST_RD（华东区子部门），在 @DataScope 范围内
+                    List.of("scope_ok_1", "华东合法", "华东区/研发组", "", "", "", "", "", ""),
+                    // row 3: 属于 DEPT_SOUTH_RD（华南区子部门），越界
+                    List.of("scope_bad_1", "华南越界", "华南区/研发组", "", "", "", "", "", ""),
+                    // row 4: 未指定部门，受限操作人禁止留空
+                    List.of("scope_bad_2", "空部门越界", "", "", "", "", "", "", "")
+            ));
+
+            MvcResult res = mockMvc.perform(multipart("/admin/system/user/import")
+                            .file(xlsxMultipart("scope_guard.xlsx", mixedScopeBytes))
+                            .header("satoken-admin", scopedToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andExpect(jsonPath("$.data.successCount").value(0))
+                    .andExpect(jsonPath("$.data.failCount").value(2))
+                    .andReturn();
+
+            JsonNode errorsNode = objectMapper.readTree(res.getResponse().getContentAsString())
+                    .path("data").path("errors");
+            assertThat(errorsNode).hasSize(2);
+            assertThat(errorsNode.get(0).path("rowNum").asInt()).isEqualTo(3);
+            assertThat(errorsNode.get(1).path("rowNum").asInt()).isEqualTo(4);
+
+            // 阶段 3 TOCTOU 复核：引入已停用部门 DEPT_DISABLED 必须抛出 100001 且整批不落库
+            String hash = PasswordUtil.hash("Ateng@Stage3Check");
+            PreparedImportUser staleDeptUser = new PreparedImportUser(
+                    new ValidatedImportRow("toctou_bad_u", "并发停用测试", DEPT_DISABLED,
+                            List.of(), List.of(), null, null, "2", CommonStatusEnum.NORMAL.getCode()),
+                    hash
+            );
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                            userBatchPersistHelper.persistBatch(TENANT_ID, List.of(staleDeptUser)))
+                    .isInstanceOf(io.github.atengk.boot.core.exception.BusinessException.class)
+                    .extracting("code")
+                    .isEqualTo(CommonBizResultCode.PARAM_INVALID.getCode());
+        } finally {
+            TenantContextHolder.runWithTenant(TENANT_ID, () -> {
+                sysUserRoleMapper.delete(Wrappers.<SysUserRole>lambdaQuery().eq(SysUserRole::getUserId, scopedUserId));
+                sysUserMapper.deleteById(scopedUserId);
+                sysRoleMenuMapper.delete(Wrappers.<SysRoleMenu>lambdaQuery().eq(SysRoleMenu::getRoleId, scopedRoleId));
+                sysRoleMapper.deleteById(scopedRoleId);
+            });
         }
     }
 

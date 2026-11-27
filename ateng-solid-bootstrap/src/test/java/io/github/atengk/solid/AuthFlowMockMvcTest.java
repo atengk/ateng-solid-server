@@ -1,13 +1,18 @@
 package io.github.atengk.solid;
 
+import cn.dev33.satoken.stp.StpLogic;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.boot.core.util.JsonUtil;
 import io.github.atengk.boot.core.util.PasswordUtil;
 import io.github.atengk.boot.mybatisplus.context.DataPermissionContextHolder;
 import io.github.atengk.boot.satoken.defense.LoginFailureLockService;
+import io.github.atengk.boot.satoken.model.LoginUser;
+import io.github.atengk.boot.satoken.util.LoginHelper;
+import io.github.atengk.solid.auth.result.AuthResultCode;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
 import io.github.atengk.solid.system.entity.SysDept;
@@ -423,6 +428,33 @@ class AuthFlowMockMvcTest {
                 .andExpect(jsonPath("$.code").value(401));
 
         awaitLoginAuditLogs();
+    }
+
+    @Test
+    @Order(99)
+    @DisplayName("关闭多租户模式降级运行时，携带非 0 租户历史会话令牌应当强制注销并拒绝（101005 -> 401）")
+    void shouldLogoutAndRejectNonPlatformSessionWhenMultiTenantIsDisabled() throws Exception {
+        StpLogic stpLogic = LoginHelper.getStpLogic(SolidConstants.ADMIN_LOGIN_TYPE);
+        String staleCompositeId = LoginHelper.buildCompositeLoginId("5001", "99999");
+        String staleToken = stpLogic.createLoginSession(staleCompositeId);
+        LoginUser staleUser = LoginUser.builder()
+                .userId("99999")
+                .userAccount("stale_tenant_user")
+                .userName("残留租户用户")
+                .userType(SolidConstants.ADMIN_LOGIN_TYPE)
+                .tenantId("5001")
+                .build();
+        stpLogic.getSessionByLoginId(staleCompositeId).set("login_user", JsonUtil.toJsonString(staleUser));
+
+        mockMvc.perform(get("/admin/auth/info")
+                        .header("satoken-admin", staleToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(AuthResultCode.TENANT_UNAVAILABLE.getCode()));
+
+        mockMvc.perform(get("/admin/auth/info")
+                        .header("satoken-admin", staleToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(401));
     }
 
     private String loginAndGetToken(String username, String password) throws Exception {

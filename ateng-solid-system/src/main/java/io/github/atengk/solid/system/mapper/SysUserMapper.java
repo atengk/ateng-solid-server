@@ -108,6 +108,37 @@ public interface SysUserMapper extends AtengBaseMapper<SysUser> {
     Page<SysUser> selectUserPageWithDataScope(Page<SysUser> page, @Param("criteria") UserQueryCriteria criteria);
 
     /**
+     * 在 {@link DataScope} 约束下分页检索当前工作租户内启用用户的轻量下拉选项。
+     *
+     * @param page     MyBatis-Plus 分页对象（建议关闭 count 统计限制返回上限）
+     * @param tenantId 目标租户主键
+     * @param status   启用状态编码
+     * @param keyword  账号或昵称模糊关键字（可选）
+     * @return 数据权限范围内可见的启用态用户分页结果
+     */
+    @DataScope(alias = "u", deptColumn = "dept_id", userColumn = "id")
+    @Select("""
+            <script>
+            SELECT u.id, u.username, u.nickname
+            FROM sys_user u
+            WHERE u.tenant_id = #{tenantId}
+              AND u.deleted = 0
+              AND u.status = #{status}
+              <if test="keyword != null and keyword != ''">
+                AND (u.username LIKE CONCAT('%', #{keyword}, '%')
+                     OR u.nickname LIKE CONCAT('%', #{keyword}, '%'))
+              </if>
+            ORDER BY u.id ASC
+            </script>
+            """)
+    Page<SysUser> selectActiveUserOptionsWithDataScope(
+            Page<SysUser> page,
+            @Param("tenantId") Long tenantId,
+            @Param("status") Integer status,
+            @Param("keyword") String keyword
+    );
+
+    /**
      * 按主键查询单个未删除用户（强制叠加 {@link DataScope} 数据范围权限与自动解密）。
      *
      * @param tenantId 目标租户主键

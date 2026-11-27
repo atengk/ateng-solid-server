@@ -81,7 +81,7 @@ public class SysDeptController {
      * @return 新建部门主键
      */
     @SaCheckPermission("system:dept:create")
-    @OperateLog(module = "部门管理", type = OperateTypeEnum.INSERT, description = "新增部门")
+    @OperateLog(module = "部门管理", type = OperateTypeEnum.INSERT, description = "新增部门", excludeParams = {"phone", "email"})
     @PostMapping
     public Result<Long> create(@Valid @RequestBody DeptSaveRequest request) {
         return Result.success(sysDeptService.createDept(request));
@@ -94,7 +94,7 @@ public class SysDeptController {
      * @return 空成功响应
      */
     @SaCheckPermission("system:dept:update")
-    @OperateLog(module = "部门管理", type = OperateTypeEnum.UPDATE, description = "修改部门")
+    @OperateLog(module = "部门管理", type = OperateTypeEnum.UPDATE, description = "修改部门", excludeParams = {"phone", "email"})
     @PutMapping
     public Result<Void> update(@Valid @RequestBody DeptSaveRequest request) {
         sysDeptService.updateDept(request);

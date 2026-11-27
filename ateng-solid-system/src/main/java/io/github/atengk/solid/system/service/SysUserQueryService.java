@@ -117,7 +117,7 @@ public class SysUserQueryService {
     }
 
     /**
-     * 按可选关键字检索当前工作租户下正常启用状态的用户轻量化下拉选项列表（匹配账号或昵称）。
+     * 按可选关键字检索当前工作租户下满足 5 级 {@code @DataScope} 与正常启用状态的用户轻量化下拉选项列表（匹配账号或昵称，单次上限 200 条）。
      *
      * @param keyword 账号或昵称模糊关键字（可为空）
      * @return 启用中用户选项列表
@@ -125,17 +125,13 @@ public class SysUserQueryService {
     public List<UserOptionVO> listActiveUserOptions(String keyword) {
         Long tenantId = contextSupport.requireEffectiveTenantId();
         String trimmedKeyword = SystemContextSupport.trimToNull(keyword);
-        List<SysUser> users = DataPermissionContextHolder.runWithoutPermission(() ->
-                TenantContextHolder.runWithTenant(tenantId, () -> sysUserMapper.selectList(
-                        Wrappers.<SysUser>lambdaQuery()
-                                .select(SysUser::getId, SysUser::getUsername, SysUser::getNickname)
-                                .eq(SysUser::getTenantId, tenantId)
-                                .eq(SysUser::getStatus, CommonStatusEnum.NORMAL.getCode())
-                                .and(trimmedKeyword != null, w -> w.like(SysUser::getUsername, trimmedKeyword)
-                                        .or().like(SysUser::getNickname, trimmedKeyword))
-                                .orderByAsc(SysUser::getId)
-                ))
-        );
+        Page<SysUser> page = TenantContextHolder.runWithTenant(tenantId, () -> sysUserMapper.selectActiveUserOptionsWithDataScope(
+                new Page<>(1, 200, false),
+                tenantId,
+                CommonStatusEnum.NORMAL.getCode(),
+                trimmedKeyword
+        ));
+        List<SysUser> users = page != null ? page.getRecords() : Collections.emptyList();
         if (CollectionUtils.isEmpty(users)) {
             return Collections.emptyList();
         }

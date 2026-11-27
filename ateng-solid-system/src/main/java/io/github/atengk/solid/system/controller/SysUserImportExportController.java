@@ -70,7 +70,7 @@ public class SysUserImportExportController {
      */
     @SaCheckPermission("system:user:import")
     @RateLimiter(limitType = LimitType.USER, key = "'system:user:import'", count = 5, time = 60)
-    @OperateLog(module = "用户管理", type = OperateTypeEnum.IMPORT, description = "批量导入用户", saveParams = false)
+    @OperateLog(module = "用户管理", type = OperateTypeEnum.IMPORT, description = "批量导入用户", saveParams = false, saveResult = false)
     @PostMapping("/import")
     public Result<ImportResultVO> importUsers(@RequestParam("file") MultipartFile file) {
         if (file == null || file.isEmpty()) {
@@ -111,7 +111,7 @@ public class SysUserImportExportController {
      */
     @SaCheckPermission("system:user:export")
     @RateLimiter(limitType = LimitType.USER, key = "'system:user:export'", count = 10, time = 60)
-    @OperateLog(module = "用户管理", type = OperateTypeEnum.EXPORT, description = "导出用户数据", saveResult = false)
+    @OperateLog(module = "用户管理", type = OperateTypeEnum.EXPORT, description = "导出用户数据", excludeParams = {"phone", "email"}, saveResult = false)
     @PostMapping("/export")
     public void exportUsers(
             @RequestBody(required = false) UserExportRequest request,

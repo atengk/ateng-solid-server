@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
+import lombok.ToString;
 
 /**
  * 部门新增与修改请求体。
@@ -14,6 +15,7 @@ import lombok.Data;
  * @since 2026-11-25
  */
 @Data
+@ToString(exclude = {"phone", "email"})
 public class DeptSaveRequest {
 
     /**

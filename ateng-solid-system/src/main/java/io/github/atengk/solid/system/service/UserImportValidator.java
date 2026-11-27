@@ -8,6 +8,7 @@ import io.github.atengk.solid.common.enums.CommonStatusEnum;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.api.result.SystemResultCode;
 import io.github.atengk.solid.system.excel.UserImportDTO;
+import io.github.atengk.solid.system.security.SolidDataPermissionHandler.ScopeResolution;
 import io.github.atengk.solid.system.support.ImportDeptPathResolver;
 import io.github.atengk.solid.system.support.ImportReferenceCatalogSupport;
 import io.github.atengk.solid.system.support.ImportReferenceCatalogSupport.ReferenceCatalog;
@@ -51,6 +52,7 @@ public class UserImportValidator {
      *
      * @param tenantId              当前工作租户主键
      * @param allowSuperAdminAssign 是否处于平台超管视角
+     * @param actorScope            当前操作人数据权限范围快照（为空时按空可见集合 Fail-Closed 处理）
      * @param readResult            Fesod 读取与 JSR-303 校验结果
      * @param importMaxRows         允许导入的最大物理数据行数
      * @return 校验汇总结论（含总行数、可入库规范化行列表及错误明细列表）
@@ -58,9 +60,11 @@ public class UserImportValidator {
     public ValidationOutcome validate(
             Long tenantId,
             boolean allowSuperAdminAssign,
+            ScopeResolution actorScope,
             ExcelReadResult<UserImportDTO> readResult,
             int importMaxRows
     ) {
+        ScopeResolution effectiveScope = actorScope != null ? actorScope : ScopeResolution.EMPTY;
         List<ExcelRowData<UserImportDTO>> rowRecords = readResult != null && readResult.getRowRecords() != null
                 ? readResult.getRowRecords()
                 : Collections.emptyList();
@@ -95,7 +99,7 @@ public class UserImportValidator {
                 continue;
             }
             ValidatedImportRow validated = validateSingleRow(
-                    record.rowIndex(), record.data(), allowSuperAdminAssign, catalog,
+                    record.rowIndex(), record.data(), allowSuperAdminAssign, effectiveScope, catalog,
                     seenUsernames, seenPhones, seenEmails, errors
             );
             if (validated != null) {
@@ -133,6 +137,7 @@ public class UserImportValidator {
             int rowIndex,
             UserImportDTO dto,
             boolean allowSuperAdminAssign,
+            ScopeResolution actorScope,
             ReferenceCatalog catalog,
             Map<String, Integer> seenUsernames,
             Map<String, Integer> seenPhones,
@@ -150,7 +155,15 @@ public class UserImportValidator {
         validateUsernameUniqueness(rowIndex, username, catalog, seenUsernames, errors);
         String phone = validatePhone(rowIndex, dto.getPhone(), catalog, seenPhones, errors);
         String email = validateEmail(rowIndex, dto.getEmail(), catalog, seenEmails, errors);
+        int deptErrorBefore = errors.size();
         Long deptId = ImportDeptPathResolver.resolveDeptId(rowIndex, dto.getDeptName(), catalog.deptIndex(), errors);
+        if (errors.size() == deptErrorBefore && !actorScope.isDeptAllowed(deptId)) {
+            String message = deptId == null
+                    ? "受数据权限约束的操作人导入用户时必须指定归属部门"
+                    : "归属部门不在当前操作人的数据权限范围内";
+            errors.add(ExcelErrorRow.of(UserImportDTO.class, rowIndex, UserImportDTO::getDeptName,
+                    dto.getDeptName(), message));
+        }
         List<Long> postIds = ImportReferenceCatalogSupport.resolvePostIds(
                 rowIndex, dto.getPostCodes(), catalog.activePostsByCode(), errors
         );

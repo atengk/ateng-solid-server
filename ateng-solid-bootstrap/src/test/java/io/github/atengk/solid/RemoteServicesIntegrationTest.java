@@ -111,6 +111,7 @@ import static org.mockito.Mockito.when;
         properties = {
                 "ateng.solid.init.enabled=true",
                 "ateng.solid.tenant.enabled=true",
+                "ateng.boot.mybatis-plus.tenant.enabled=true",
                 "spring.datasource.url=jdbc:h2:mem:remote_services_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
         }
 )
@@ -714,9 +715,9 @@ class RemoteServicesIntegrationTest {
         remoteAuditLogService.recordLoginAudit(successCmd);
         remoteAuditLogService.recordLoginAudit(successCmd);
 
-        List<SysLoginLog> syncLogs = sysLoginLogMapper.selectList(
+        List<SysLoginLog> syncLogs = TenantContextHolder.runWithTenant(TENANT_A_ID, () -> sysLoginLogMapper.selectList(
                 Wrappers.<SysLoginLog>lambdaQuery().eq(SysLoginLog::getTraceId, "trace-sync-1")
-        );
+        ));
         assertThat(syncLogs).hasSize(1);
         assertThat(syncLogs.getFirst().getBrowser()).isNotBlank();
         assertThat(syncLogs.getFirst().getOs()).isNotBlank();
@@ -759,9 +760,9 @@ class RemoteServicesIntegrationTest {
         long deadline = System.currentTimeMillis() + Duration.ofSeconds(5).toMillis();
         List<SysLoginLog> asyncLogs = List.of();
         while (System.currentTimeMillis() < deadline) {
-            asyncLogs = sysLoginLogMapper.selectList(
+            asyncLogs = TenantContextHolder.runWithTenant(TENANT_A_ID, () -> sysLoginLogMapper.selectList(
                     Wrappers.<SysLoginLog>lambdaQuery().eq(SysLoginLog::getTraceId, asyncTraceId)
-            );
+            ));
             if (!asyncLogs.isEmpty()) {
                 break;
             }

@@ -1,7 +1,7 @@
 package io.github.atengk.solid.system.controller;
 
-import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.annotation.SaMode;
 import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
@@ -58,12 +58,12 @@ public class SysUserController {
     }
 
     /**
-     * 获取当前工作租户下正常启用状态的用户下拉选项（供部门负责人选择器等受权场景消费）。
+     * 获取当前工作租户下满足 5 级数据权限与正常启用状态的用户轻量化下拉选项（供部门负责人选择器等受权场景消费）。
      *
      * @param keyword 账号或昵称模糊关键字（可选）
      * @return 启用中用户选项列表
      */
-    @SaCheckLogin
+    @SaCheckPermission(value = {"system:dept:create", "system:dept:update", "system:user:list"}, mode = SaMode.OR)
     @GetMapping("/options")
     public Result<List<UserOptionVO>> options(@RequestParam(required = false) String keyword) {
         return Result.success(sysUserQueryService.listActiveUserOptions(keyword));
@@ -101,7 +101,7 @@ public class SysUserController {
      * @return 空成功响应
      */
     @SaCheckPermission("system:user:update")
-    @OperateLog(module = "用户管理", type = OperateTypeEnum.UPDATE, description = "修改用户")
+    @OperateLog(module = "用户管理", type = OperateTypeEnum.UPDATE, description = "修改用户", excludeParams = {"phone", "email"})
     @PutMapping
     public Result<Void> update(@Valid @RequestBody UserUpdateRequest request) {
         sysUserService.updateUser(request);

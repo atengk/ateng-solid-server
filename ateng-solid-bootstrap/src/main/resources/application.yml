@@ -76,6 +76,7 @@ ateng:
         max-args-length: 1024
     web:
       long-to-string: true
+      trusted-proxies: ${SOLID_TRUSTED_PROXIES:}
       trace:
         enabled: true
         header-name: X-Trace-Id
@@ -92,6 +93,22 @@ ateng:
         enabled: false
       operate-log:
         enabled: true
+        default-exclude-params:
+          - password
+          - passwd
+          - pwd
+          - oldPassword
+          - newPassword
+          - confirmPassword
+          - secret
+          - token
+          - accessToken
+          - refreshToken
+          - authorization
+          - phone
+          - email
+          - adminPassword
+          - configValue
       security-headers:
         enabled: true
         content-type-options: true

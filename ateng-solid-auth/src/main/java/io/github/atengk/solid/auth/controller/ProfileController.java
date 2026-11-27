@@ -58,7 +58,7 @@ public class ProfileController {
      * @return 空成功响应
      */
     @SaCheckLogin
-    @OperateLog(module = "个人中心", type = OperateTypeEnum.UPDATE, description = "更新个人基本资料")
+    @OperateLog(module = "个人中心", type = OperateTypeEnum.UPDATE, description = "更新个人基本资料", excludeParams = {"phone", "email"})
     @PutMapping("/profile")
     public Result<Void> updateProfile(@Valid @RequestBody UpdateProfileRequest request) {
         profileService.updatePersonalProfile(request);

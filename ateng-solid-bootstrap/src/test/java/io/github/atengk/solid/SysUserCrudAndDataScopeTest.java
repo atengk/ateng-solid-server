@@ -14,6 +14,7 @@ import io.github.atengk.boot.satoken.cache.PermissionCacheService;
 import io.github.atengk.boot.satoken.defense.LoginFailureLockService;
 import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.common.enums.CommonStatusEnum;
+import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.api.enums.DataScopeType;
 import io.github.atengk.solid.system.api.result.SystemResultCode;
 import io.github.atengk.solid.system.entity.SysDept;
@@ -381,9 +382,27 @@ class SysUserCrudAndDataScopeTest {
                 .path("data").path("records").findValuesAsText("username");
         assertThat(subtreeUsernames).containsExactlyInAnyOrder("rd_lead", "backend_dev");
 
-        // 4. /options?keyword= 支持按昵称或账号检索，对齐前端 user.ts 契约
-        MvcResult optRes = mockMvc.perform(get("/admin/system/user/options")
+        // 4. /options?keyword= 强制受 @DataScope 与功能权限约束（按昵称或账号检索，对齐前端 user.ts 契约）
+        MvcResult scopedEmptyOptRes = mockMvc.perform(get("/admin/system/user/options")
                         .header("satoken-admin", rdToken)
+                        .param("keyword", "销售"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andReturn();
+        assertThat(objectMapper.readTree(scopedEmptyOptRes.getResponse().getContentAsString()).path("data")).isEmpty();
+
+        MvcResult scopedMatchOptRes = mockMvc.perform(get("/admin/system/user/options")
+                        .header("satoken-admin", rdToken)
+                        .param("keyword", "后端"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andReturn();
+        JsonNode scopedMatchData = objectMapper.readTree(scopedMatchOptRes.getResponse().getContentAsString()).path("data");
+        assertThat(scopedMatchData).hasSize(1);
+        assertThat(scopedMatchData.get(0).path("username").asText()).isEqualTo("backend_dev");
+
+        MvcResult optRes = mockMvc.perform(get("/admin/system/user/options")
+                        .header("satoken-admin", rootMgrToken)
                         .param("keyword", "销售"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
@@ -392,6 +411,30 @@ class SysUserCrudAndDataScopeTest {
         assertThat(optData).hasSize(1);
         assertThat(optData.get(0).path("userId").asText()).isEqualTo(String.valueOf(USER_SALES_REP));
         assertThat(optData.get(0).path("username").asText()).isEqualTo("sales_rep");
+
+        // 无 system:dept:create|update|user:list 权限的账号访问 /options 应当返回 403
+        long noOptionPermRoleId = 31398L;
+        long noOptionPermUserId = 31498L;
+        TenantContextHolder.runWithTenant(TENANT_ID, () -> {
+            insertRole(TENANT_ID, noOptionPermRoleId, "无用户选项权限", "no_opt_role",
+                    DataScopeType.SELF, List.of(1000L));
+            insertUser(TENANT_ID, noOptionPermUserId, DEPT_BACKEND, "no_opt_user", "无权限者",
+                    "Ateng@31498", null, null, noOptionPermRoleId);
+        });
+        try {
+            String noOptToken = loginAndGetToken("T31002", "no_opt_user", "Ateng@31498");
+            mockMvc.perform(get("/admin/system/user/options")
+                            .header("satoken-admin", noOptToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403));
+        } finally {
+            TenantContextHolder.runWithTenant(TENANT_ID, () -> {
+                sysUserRoleMapper.delete(Wrappers.<SysUserRole>lambdaQuery().eq(SysUserRole::getUserId, noOptionPermUserId));
+                sysUserMapper.deleteById(noOptionPermUserId);
+                sysRoleMenuMapper.delete(Wrappers.<SysRoleMenu>lambdaQuery().eq(SysRoleMenu::getRoleId, noOptionPermRoleId));
+                sysRoleMapper.deleteById(noOptionPermRoleId);
+            });
+        }
 
         // 5. Service 层验证 SELF、DEPT、CUSTOM + SELF 多角色并集
         TenantContextHolder.runWithTenant(TENANT_ID, () -> {
@@ -738,15 +781,67 @@ class SysUserCrudAndDataScopeTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.code").value(SystemResultCode.RECORD_NOT_FOUND.getCode()));
 
-            // 2. 在管辖子部门 DEPT_BACKEND 下新建测试成员，验证修改/停用/重置密码/删除均放行且可混删拦截
-            Long subMemberId = TenantContextHolder.runWithTenant(TENANT_ID, () -> {
-                UserCreateRequest req = new UserCreateRequest();
-                req.setUsername("rd_scope_sub");
-                req.setNickname("子部门成员");
-                req.setPassword("Ateng@Sub1");
-                req.setDeptId(DEPT_BACKEND);
-                return sysUserService.createUser(req);
-            });
+            // 2. 越权新增到管辖外部门（DEPT_SALES）或置空部门均被 @DataScope 写路径防线拒绝（100003）
+            mockMvc.perform(post("/admin/system/user")
+                            .header("satoken-admin", writerToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "username", "out_scope_create",
+                                    "nickname", "越权建销售",
+                                    "password", "Ateng@Sub1",
+                                    "deptId", DEPT_SALES
+                            ))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(CommonBizResultCode.DATA_SCOPE_ERROR.getCode()));
+
+            mockMvc.perform(post("/admin/system/user")
+                            .header("satoken-admin", writerToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "username", "null_dept_create",
+                                    "nickname", "无部门越权建",
+                                    "password", "Ateng@Sub1"
+                            ))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(CommonBizResultCode.DATA_SCOPE_ERROR.getCode()));
+
+            // 3. 在管辖子部门 DEPT_BACKEND 下通过 HTTP 新建测试成员，验证越权迁移部门被拒、管辖内更新与审计脱敏、以及混删拦截
+            MvcResult createdSubRes = mockMvc.perform(post("/admin/system/user")
+                            .header("satoken-admin", writerToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "username", "rd_scope_sub",
+                                    "nickname", "子部门成员",
+                                    "password", "Ateng@Sub1",
+                                    "deptId", DEPT_BACKEND
+                            ))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andReturn();
+            Long subMemberId = Long.parseLong(objectMapper.readTree(createdSubRes.getResponse().getContentAsString())
+                    .path("data").asText());
+
+            // 禁止将下属用户迁移到管辖范围外部门（DEPT_SALES）或置空归属部门
+            mockMvc.perform(put("/admin/system/user")
+                            .header("satoken-admin", writerToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "id", subMemberId,
+                                    "nickname", "越权迁部门",
+                                    "deptId", DEPT_SALES
+                            ))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(CommonBizResultCode.DATA_SCOPE_ERROR.getCode()));
+
+            mockMvc.perform(put("/admin/system/user")
+                            .header("satoken-admin", writerToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "id", subMemberId,
+                                    "nickname", "置空部门越权"
+                            ))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(CommonBizResultCode.DATA_SCOPE_ERROR.getCode()));
 
             mockMvc.perform(put("/admin/system/user")
                             .header("satoken-admin", writerToken)
@@ -754,10 +849,17 @@ class SysUserCrudAndDataScopeTest {
                             .content(objectMapper.writeValueAsString(Map.of(
                                     "id", subMemberId,
                                     "nickname", "子部门成员已更新",
-                                    "deptId", DEPT_BACKEND
+                                    "deptId", DEPT_BACKEND,
+                                    "phone", "13931488777",
+                                    "email", "sub.secret@example.com"
                             ))))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.code").value(200));
+
+            SysOperLog updateOperLog = awaitOperateLog(TENANT_ID, "用户管理", OperateTypeEnum.UPDATE, "修改用户");
+            assertThat(updateOperLog.getRequestParams())
+                    .contains("[EXCLUDED]")
+                    .doesNotContain("13931488777", "sub.secret@example.com");
 
             mockMvc.perform(put("/admin/system/user/{id}/status", subMemberId)
                             .header("satoken-admin", writerToken)

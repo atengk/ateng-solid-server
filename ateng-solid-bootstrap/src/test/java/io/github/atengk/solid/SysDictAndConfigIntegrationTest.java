@@ -1,10 +1,20 @@
 package io.github.atengk.solid;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.atengk.boot.core.context.TenantContextHolder;
 import io.github.atengk.boot.core.context.UserContextHolder;
+import io.github.atengk.boot.core.util.PasswordUtil;
 import io.github.atengk.boot.mybatisplus.context.DataPermissionContextHolder;
 import io.github.atengk.boot.satoken.defense.LoginFailureLockService;
+import io.github.atengk.solid.common.enums.CommonStatusEnum;
+import io.github.atengk.solid.system.entity.SysOperLog;
+import io.github.atengk.solid.system.entity.SysRole;
+import io.github.atengk.solid.system.entity.SysRoleMenu;
+import io.github.atengk.solid.system.entity.SysTenantPackageMenu;
+import io.github.atengk.solid.system.entity.SysUser;
+import io.github.atengk.solid.system.entity.SysUserRole;
+import io.github.atengk.solid.system.mapper.SysOperLogMapper;
 import io.github.atengk.solid.system.mapper.SysRoleMapper;
 import io.github.atengk.solid.system.mapper.SysRoleMenuMapper;
 import io.github.atengk.solid.system.mapper.SysTenantMapper;
@@ -26,9 +36,11 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -79,6 +91,8 @@ class SysDictAndConfigIntegrationTest {
     private SysUserMapper sysUserMapper;
     @Autowired
     private SysUserRoleMapper sysUserRoleMapper;
+    @Autowired
+    private SysOperLogMapper sysOperLogMapper;
 
     @BeforeAll
     void setUpFixtures() {
@@ -320,5 +334,135 @@ class SysDictAndConfigIntegrationTest {
                         .content(objectMapper.writeValueAsString(Spec4TestFixtures.configUpdateBody(
                                 20001L, "用户管理-初始默认密码", "sys.user.initPassword", "Ateng@2026", "Y"))))
                 .andExpect(jsonPath("$.code").value(200));
+    }
+
+    @Test
+    @DisplayName("/config/key/{configKey} 按前缀分级鉴权，且新增/修改参数操作日志不得泄漏明文 configValue")
+    void shouldEnforceGradedAuthOnConfigKeyAndRedactConfigValueInOperateLog() throws Exception {
+        String superToken = Spec4TestFixtures.loginAsSuperAdmin(mockMvc, objectMapper);
+        String tenantToken = Spec4TestFixtures.loginAndGetToken(mockMvc, objectMapper, "T9201", "cfguser9201", "Ateng@9201");
+
+        String pubCfgId = Spec4TestFixtures.postAndExtractId(mockMvc, objectMapper, tenantToken, "/admin/system/config",
+                Spec4TestFixtures.configCreateBody("站点展示标题", "public.site.title", "Ateng Solid", "N"));
+        String secretCfgId = Spec4TestFixtures.postAndExtractId(mockMvc, objectMapper, tenantToken, "/admin/system/config",
+                Spec4TestFixtures.configCreateBody("内部签名密钥", "secret.webhook.token", "whsec-plaintext-9201", "N"));
+
+        // 追加 1000/1100/1102 至套餐以构造仅含 system:user:create 的受限角色，及完全无配置/用户权限的普通角色
+        for (Long mid : List.of(1000L, 1100L, 1102L)) {
+            SysTenantPackageMenu pm = new SysTenantPackageMenu();
+            pm.setPackageId(9200L);
+            pm.setMenuId(mid);
+            sysTenantPackageMenuMapper.insert(pm);
+        }
+
+        long plainRoleId = 9281L;
+        long plainUserId = 9291L;
+        long creatorRoleId = 9282L;
+        long creatorUserId = 9292L;
+        TenantContextHolder.runWithTenant(TENANT_ID, () -> {
+            seedRoleAndUser(plainRoleId, "plain_view_only", "cfgplain9201", plainUserId, List.of(2000L));
+            seedRoleAndUser(creatorRoleId, "user_creator_only", "cfgcreator9201", creatorUserId, List.of(1000L, 1100L, 1102L));
+        });
+
+        try {
+            String plainToken = Spec4TestFixtures.loginAndGetToken(mockMvc, objectMapper, "T9201", "cfgplain9201", "Ateng@9201");
+            String creatorToken = Spec4TestFixtures.loginAndGetToken(mockMvc, objectMapper, "T9201", "cfgcreator9201", "Ateng@9201");
+
+            // 1. public.* 只需 @SaCheckLogin
+            mockMvc.perform(get("/admin/system/config/key/public.site.title").header("satoken-admin", plainToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andExpect(jsonPath("$.data").value("Ateng Solid"));
+
+            // 2. 无权用户禁止读取 initPassword 与内部键
+            mockMvc.perform(get("/admin/system/config/key/sys.user.initPassword").header("satoken-admin", plainToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403));
+            mockMvc.perform(get("/admin/system/config/key/secret.webhook.token").header("satoken-admin", plainToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403));
+
+            // 3. 仅持 system:user:create 可读 sys.user.initPassword，但仍禁止读取其他非 public 键
+            mockMvc.perform(get("/admin/system/config/key/sys.user.initPassword").header("satoken-admin", creatorToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200));
+            mockMvc.perform(get("/admin/system/config/key/secret.webhook.token").header("satoken-admin", creatorToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(403));
+
+            // 4. 持 system:config:list 正常读取任意键
+            mockMvc.perform(get("/admin/system/config/key/secret.webhook.token").header("satoken-admin", tenantToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(200))
+                    .andExpect(jsonPath("$.data").value("whsec-plaintext-9201"));
+
+            // 5. 异步操作日志不得包含 configValue 明文
+            long deadline = System.currentTimeMillis() + Duration.ofSeconds(5).toMillis();
+            List<SysOperLog> logs = List.of();
+            while (System.currentTimeMillis() < deadline) {
+                logs = TenantContextHolder.runWithTenant(TENANT_ID, () -> sysOperLogMapper.selectList(
+                        Wrappers.<SysOperLog>lambdaQuery()
+                                .eq(SysOperLog::getTenantId, TENANT_ID)
+                                .eq(SysOperLog::getModule, "系统参数")
+                                .orderByDesc(SysOperLog::getId)
+                ));
+                if (logs.stream().anyMatch(l -> l.getRequestParams() != null && l.getRequestParams().contains("secret.webhook.token"))) {
+                    break;
+                }
+                Thread.sleep(50);
+            }
+            SysOperLog secretLog = logs.stream()
+                    .filter(l -> l.getRequestParams() != null && l.getRequestParams().contains("secret.webhook.token"))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("等待系统参数审计日志超时"));
+            assertThat(secretLog.getRequestParams()).contains("[EXCLUDED]").doesNotContain("whsec-plaintext-9201");
+        } finally {
+            mockMvc.perform(delete("/admin/system/config/{ids}", pubCfgId + "," + secretCfgId)
+                    .header("satoken-admin", superToken).header("X-Tenant-Id", String.valueOf(TENANT_ID)));
+            TenantContextHolder.runWithTenant(TENANT_ID, () -> {
+                sysUserRoleMapper.delete(Wrappers.<SysUserRole>lambdaQuery().in(SysUserRole::getUserId, List.of(plainUserId, creatorUserId)));
+                sysUserMapper.deleteByIds(List.of(plainUserId, creatorUserId));
+                sysRoleMenuMapper.delete(Wrappers.<SysRoleMenu>lambdaQuery().in(SysRoleMenu::getRoleId, List.of(plainRoleId, creatorRoleId)));
+                sysRoleMapper.deleteByIds(List.of(plainRoleId, creatorRoleId));
+            });
+        }
+    }
+
+    private void seedRoleAndUser(Long roleId, String roleKey, String username, Long userId, List<Long> menuIds) {
+        SysRole role = new SysRole();
+        role.setId(roleId);
+        role.setTenantId(TENANT_ID);
+        role.setRoleName(roleKey);
+        role.setRoleKey(roleKey);
+        role.setDataScope(1);
+        role.setMenuCheckStrictly(true);
+        role.setDeptCheckStrictly(false);
+        role.setSort(1);
+        role.setStatus(CommonStatusEnum.NORMAL.getCode());
+        sysRoleMapper.insert(role);
+
+        for (Long mid : menuIds) {
+            SysRoleMenu rm = new SysRoleMenu();
+            rm.setTenantId(TENANT_ID);
+            rm.setRoleId(roleId);
+            rm.setMenuId(mid);
+            sysRoleMenuMapper.insert(rm);
+        }
+
+        SysUser user = new SysUser();
+        user.setId(userId);
+        user.setTenantId(TENANT_ID);
+        user.setUsername(username);
+        user.setNickname(username);
+        user.setPassword(PasswordUtil.hash("Ateng@9201"));
+        user.setGender("2");
+        user.setStatus(CommonStatusEnum.NORMAL.getCode());
+        sysUserMapper.insert(user);
+
+        SysUserRole ur = new SysUserRole();
+        ur.setTenantId(TENANT_ID);
+        ur.setUserId(userId);
+        ur.setRoleId(roleId);
+        sysUserRoleMapper.insert(ur);
     }
 }

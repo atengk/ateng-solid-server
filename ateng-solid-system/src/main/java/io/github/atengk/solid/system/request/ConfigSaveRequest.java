@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
+import lombok.ToString;
 
 /**
  * 系统参数新增与修改请求体。
@@ -12,6 +13,7 @@ import lombok.Data;
  * @since 2026-11-25
  */
 @Data
+@ToString(exclude = {"configValue"})
 public class ConfigSaveRequest {
 
     /**

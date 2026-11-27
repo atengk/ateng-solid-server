@@ -61,6 +61,8 @@ ateng:
           total-size-cap: ${SOLID_LOG_TOTAL_SIZE_CAP:10GB}
           split-error: true
           clean-history-on-start: false
+      slow-alert:
+        include-args: false
     async:
       concurrency-limit: ${SOLID_ASYNC_CONCURRENCY_LIMIT:256}
     redis:
@@ -76,6 +78,7 @@ ateng:
       login-defense:
         enabled: true
     web:
+      trusted-proxies: ${SOLID_TRUSTED_PROXIES:}
       log:
         enabled: false
       payload-log:
@@ -91,6 +94,8 @@ ateng:
       sanity-check:
         enabled: true
     mybatis-plus:
+      tenant:
+        enabled: ${SOLID_TENANT_ENABLED:false}
       sql-log:
         enabled: false
       slow-sql:
@@ -120,6 +125,7 @@ ateng:
       session-handle-secret: ${SOLID_AUTH_SESSION_HANDLE_SECRET}
     init:
       enabled: ${SOLID_INIT_ENABLED:true}
+      super-admin-password: ${SOLID_INIT_SUPER_ADMIN_PASSWORD}
 
 logging:
   level:

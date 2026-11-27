@@ -2,16 +2,20 @@ package io.github.atengk.solid.system.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.stp.StpLogic;
 import io.github.atengk.boot.core.audit.OperateTypeEnum;
 import io.github.atengk.boot.core.model.PageResult;
 import io.github.atengk.boot.core.model.Result;
+import io.github.atengk.boot.satoken.util.LoginHelper;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.solid.common.constant.SolidConstants;
 import io.github.atengk.solid.system.request.ConfigQueryRequest;
 import io.github.atengk.solid.system.request.ConfigSaveRequest;
 import io.github.atengk.solid.system.service.SysConfigService;
 import io.github.atengk.solid.system.vo.ConfigVO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,6 +36,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/admin/system/config")
 @RequiredArgsConstructor
 public class SysConfigController {
+
+    private static final String PUBLIC_CONFIG_PREFIX = "public.";
 
     private final SysConfigService sysConfigService;
 
@@ -60,7 +66,7 @@ public class SysConfigController {
     }
 
     /**
-     * 按参数键名读取参数值（普通租户未覆盖时自动回退读取平台默认租户 {@code 0} 全局值）。
+     * 按参数键名分级鉴权后读取参数值（普通租户未覆盖时自动回退读取平台默认租户 {@code 0} 全局值）。
      *
      * @param configKey 参数键名
      * @return 参数键值字符串（双方均未配置时返回 {@code null}）
@@ -68,6 +74,7 @@ public class SysConfigController {
     @SaCheckLogin
     @GetMapping("/key/{configKey}")
     public Result<String> getByKey(@PathVariable String configKey) {
+        assertCanReadConfigKey(configKey);
         return Result.success(sysConfigService.getConfigValue(configKey));
     }
 
@@ -78,7 +85,7 @@ public class SysConfigController {
      * @return 新建参数主键
      */
     @SaCheckPermission("system:config:create")
-    @OperateLog(module = "系统参数", type = OperateTypeEnum.INSERT, description = "新增系统参数")
+    @OperateLog(module = "系统参数", type = OperateTypeEnum.INSERT, description = "新增系统参数", excludeParams = {"configValue"})
     @PostMapping
     public Result<Long> create(@Valid @RequestBody ConfigSaveRequest request) {
         return Result.success(sysConfigService.createConfig(request));
@@ -91,7 +98,7 @@ public class SysConfigController {
      * @return 空成功响应
      */
     @SaCheckPermission("system:config:update")
-    @OperateLog(module = "系统参数", type = OperateTypeEnum.UPDATE, description = "修改系统参数")
+    @OperateLog(module = "系统参数", type = OperateTypeEnum.UPDATE, description = "修改系统参数", excludeParams = {"configValue"})
     @PutMapping
     public Result<Void> update(@Valid @RequestBody ConfigSaveRequest request) {
         sysConfigService.updateConfig(request);
@@ -110,5 +117,23 @@ public class SysConfigController {
     public Result<Void> delete(@PathVariable String ids) {
         sysConfigService.deleteConfigs(ids);
         return Result.success();
+    }
+
+    private static void assertCanReadConfigKey(String configKey) {
+        String normalizedKey = StringUtils.hasText(configKey) ? configKey.trim() : "";
+        if (normalizedKey.startsWith(PUBLIC_CONFIG_PREFIX)) {
+            return;
+        }
+        StpLogic stpLogic = LoginHelper.getStpLogic(SolidConstants.ADMIN_LOGIN_TYPE);
+        if (SolidConstants.INIT_PASSWORD_CONFIG_KEY.equals(normalizedKey)) {
+            stpLogic.checkPermissionOr(
+                    "system:config:list",
+                    "system:user:create",
+                    "system:user:update",
+                    "system:tenant:create"
+            );
+            return;
+        }
+        stpLogic.checkPermission("system:config:list");
     }
 }

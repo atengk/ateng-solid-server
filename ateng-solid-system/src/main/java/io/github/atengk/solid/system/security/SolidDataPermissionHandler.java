@@ -80,9 +80,7 @@ public class SolidDataPermissionHandler implements DataPermissionHandler {
         }
 
         // 1. 在关闭数据权限且锁定当前工作租户的隔离上下文内解析角色与可见部门范围，防自拦截递归
-        ScopeResolution resolution = DataPermissionContextHolder.runWithoutPermission(
-                () -> TenantContextHolder.runWithTenant(tenantId, () -> resolveScope(tenantId, userId))
-        );
+        ScopeResolution resolution = resolveActorScope(tenantId, userId);
         if (resolution.allowAll()) {
             return null;
         }
@@ -92,6 +90,25 @@ public class SolidDataPermissionHandler implements DataPermissionHandler {
 
         // 2. 依据目标表别名及列配置生成 AST，部门与本人条件并存时显式加括号防优先级穿透
         return buildScopeExpression(table, dataScope, userId, resolution);
+    }
+
+    /**
+     * 解析指定操作人在目标租户下的 5 级数据权限生效范围快照（供写路径与批量导入等前置业务校验复用）。
+     *
+     * @param tenantId 目标租户主键
+     * @param userId   操作人用户主键
+     * @return 只读数据权限范围快照（平台超级管理员或忽略数据权限上下文时返回 {@link ScopeResolution#ALLOW_ALL}）
+     */
+    public ScopeResolution resolveActorScope(Long tenantId, Long userId) {
+        if (tenantId == null || userId == null) {
+            return ScopeResolution.EMPTY;
+        }
+        if (DataPermissionContextHolder.isIgnore() || DataPermissionContextHolder.isSuperAdmin()) {
+            return ScopeResolution.ALLOW_ALL;
+        }
+        return DataPermissionContextHolder.runWithoutPermission(
+                () -> TenantContextHolder.runWithTenant(tenantId, () -> resolveScope(tenantId, userId))
+        );
     }
 
     private ScopeResolution resolveScope(Long tenantId, Long userId) {
@@ -111,7 +128,7 @@ public class SolidDataPermissionHandler implements DataPermissionHandler {
 
         Set<Long> visibleDeptIds = resolveVisibleDeptIds(tenantId, userId, accumulator);
         enforceMaxDeptLimit(visibleDeptIds.size());
-        return new ScopeResolution(false, visibleDeptIds, accumulator.includeSelf());
+        return new ScopeResolution(false, Collections.unmodifiableSet(visibleDeptIds), accumulator.includeSelf());
     }
 
     private ScopeAccumulator collectRoleScopes(List<SysRole> activeRoles) {
@@ -322,10 +339,27 @@ public class SolidDataPermissionHandler implements DataPermissionHandler {
         return new EqualsTo(new LongValue(1L), new LongValue(0L));
     }
 
-    private record ScopeResolution(boolean allowAll, Set<Long> visibleDeptIds, boolean includeSelf) {
-        private static final ScopeResolution ALLOW_ALL =
+    /**
+     * 操作人数据权限生效范围快照。
+     *
+     * @param allowAll       是否具备全量数据权限（含 {@code ALL} 角色与超级管理员）
+     * @param visibleDeptIds 数据权限范围内可见的部门主键集合
+     * @param includeSelf    是否具备本人数据权限
+     */
+    public record ScopeResolution(boolean allowAll, Set<Long> visibleDeptIds, boolean includeSelf) {
+        public static final ScopeResolution ALLOW_ALL =
                 new ScopeResolution(true, Collections.emptySet(), false);
-        private static final ScopeResolution EMPTY =
+        public static final ScopeResolution EMPTY =
                 new ScopeResolution(false, Collections.emptySet(), false);
+
+        /**
+         * 判断指定归属部门是否落入当前操作人的部门可见范围内。
+         *
+         * @param deptId 目标部门主键
+         * @return 具备全部权限或部门落入可见集合时返回 {@code true}
+         */
+        public boolean isDeptAllowed(Long deptId) {
+            return allowAll || (deptId != null && visibleDeptIds != null && visibleDeptIds.contains(deptId));
+        }
     }
 }

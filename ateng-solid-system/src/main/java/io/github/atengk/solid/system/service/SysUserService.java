@@ -14,6 +14,8 @@ import io.github.atengk.solid.system.mapper.SysUserMapper;
 import io.github.atengk.solid.system.request.UserCreateRequest;
 import io.github.atengk.solid.system.request.UserResetPasswordRequest;
 import io.github.atengk.solid.system.request.UserUpdateRequest;
+import io.github.atengk.solid.system.security.SolidDataPermissionHandler;
+import io.github.atengk.solid.system.security.SolidDataPermissionHandler.ScopeResolution;
 import io.github.atengk.solid.system.support.ContactFieldCrypto;
 import io.github.atengk.solid.system.support.RoleViewSupport;
 import io.github.atengk.solid.system.support.SystemContextSupport;
@@ -46,6 +48,7 @@ public class SysUserService {
     private final SysUserMapper sysUserMapper;
     private final TenantQuotaGuard tenantQuotaGuard;
     private final UserRelationSupport relationSupport;
+    private final SolidDataPermissionHandler dataPermissionHandler;
     private final TransactionTemplate transactionTemplate;
 
     /**
@@ -59,6 +62,7 @@ public class SysUserService {
             throw new BusinessException(CommonBizResultCode.PARAM_INVALID, "新增用户参数不能为空");
         }
         Long tenantId = contextSupport.requireEffectiveTenantId();
+        Long actorUserId = contextSupport.resolveCurrentActorUserId();
         String username = userContactAndDictSupport.requireValidUsername(request.getUsername());
         String nickname = userContactAndDictSupport.requireValidNickname(request.getNickname());
         String remark = SystemContextSupport.trimToNull(request.getRemark());
@@ -71,6 +75,7 @@ public class SysUserService {
         );
 
         return transactionTemplate.execute(txStatus -> {
+            assertTargetDeptInActorScope(tenantId, actorUserId, request.getDeptId(), null, null);
             relationSupport.assertActiveDeptInTenant(tenantId, request.getDeptId());
             List<Long> postIds = relationSupport.validateAndNormalizePostIds(tenantId, request.getPostIds());
             boolean allowSuperAdmin = RoleViewSupport.isPlatformSuperAdminView(tenantId);
@@ -235,6 +240,7 @@ public class SysUserService {
         List<Long> existingRoleIds = relationSupport.listAssignedRoleIds(tenantId, existing.getId());
 
         guardUserUpdateProtections(targetBuiltinSuperAdmin, editingSelf, allowSuperAdmin, targetStatus);
+        assertTargetDeptInActorScope(tenantId, actorUserId, request.getDeptId(), existing.getId(), existing.getDeptId());
         relationSupport.assertActiveDeptInTenant(tenantId, request.getDeptId());
         List<Long> postIds = request.getPostIds() != null
                 ? relationSupport.validateAndNormalizePostIds(tenantId, request.getPostIds())
@@ -329,6 +335,25 @@ public class SysUserService {
         return actorUserId != null
                 && !DataPermissionContextHolder.isIgnore()
                 && !DataPermissionContextHolder.isSuperAdmin();
+    }
+
+    private void assertTargetDeptInActorScope(
+            Long tenantId,
+            Long actorUserId,
+            Long targetDeptId,
+            Long targetUserId,
+            Long existingDeptId
+    ) {
+        if (!shouldEnforceDataScope(actorUserId)) {
+            return;
+        }
+        ScopeResolution actorScope = dataPermissionHandler.resolveActorScope(tenantId, actorUserId);
+        boolean editingSelfUnchangedDept = targetUserId != null
+                && Objects.equals(actorUserId, targetUserId)
+                && Objects.equals(existingDeptId, targetDeptId);
+        if (!editingSelfUnchangedDept && !actorScope.isDeptAllowed(targetDeptId)) {
+            throw new BusinessException(CommonBizResultCode.DATA_SCOPE_ERROR, "归属部门不在当前操作人的数据权限范围内");
+        }
     }
 
     private void assertUniqueUserFields(Long tenantId, Long excludeId, String username, String phone, String email) {
