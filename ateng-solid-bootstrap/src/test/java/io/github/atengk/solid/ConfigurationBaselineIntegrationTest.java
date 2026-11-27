@@ -12,6 +12,8 @@ import io.github.atengk.boot.satoken.properties.SaTokenProperties;
 import io.github.atengk.boot.storage.properties.StorageProperties;
 import io.github.atengk.boot.web.dict.EnumDictionaryRegistry;
 import io.github.atengk.boot.web.properties.WebProperties;
+import io.github.atengk.boot.web.ratelimit.aspect.RateLimiterAspect;
+import io.github.atengk.boot.web.ratelimit.properties.RateLimiterProperties;
 import io.github.atengk.solid.auth.properties.SolidAuthProperties;
 import io.github.atengk.solid.common.event.DomainEventPublisher;
 import io.github.atengk.solid.common.event.SpringDomainEventPublisher;
@@ -19,6 +21,7 @@ import io.github.atengk.solid.common.properties.SolidTenantProperties;
 import io.github.atengk.solid.system.properties.SolidSystemProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.env.YamlPropertySourceLoader;
@@ -81,6 +84,9 @@ class ConfigurationBaselineIntegrationTest {
 
     @Autowired
     private Environment environment;
+
+    @Autowired
+    private ObjectProvider<RateLimiterAspect> rateLimiterAspectProvider;
 
     @Test
     @DisplayName("应当正确扫描并绑定 solid 三组按域内聚的 @ConfigurationProperties Bean")
@@ -169,6 +175,15 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(webProperties.getShutdown().getDrainTimeout()).isEqualTo(Duration.ZERO);
         assertThat(webProperties.getPayloadLog().isEnabled()).isFalse();
         assertThat(webProperties.getCors().isEnabled()).isFalse();
+        RateLimiterProperties rateLimiterProperties = Binder.get(environment)
+                .bind("ateng.boot.web.ratelimit", RateLimiterProperties.class)
+                .get();
+        assertThat(rateLimiterProperties.isEnabled()).isFalse();
+        assertThat(rateLimiterProperties.getKeyPrefix()).isEqualTo("solid:rate_limit:");
+        assertThat(rateLimiterProperties.isFailOpen()).isTrue();
+        assertThat(rateLimiterProperties.isIncludeHeaders()).isTrue();
+        assertThat(rateLimiterAspectProvider.getIfAvailable()).isNull();
+
         assertThat(asyncProperties.isWaitForTasksToCompleteOnShutdown()).isTrue();
         assertThat(asyncProperties.getAwaitTermination()).isEqualTo(Duration.ofSeconds(5));
         RedisProperties redisProperties = Binder.get(environment)
@@ -200,6 +215,18 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(mybatisPlusProperties.getSqlLog().isEnabled()).isFalse();
 
         YamlPropertySourceLoader loader = new YamlPropertySourceLoader();
+        List<PropertySource<?>> baseSources = loader.load("base", new ClassPathResource("application.yml"));
+        assertThat(baseSources).hasSize(1);
+        PropertySource<?> base = baseSources.getFirst();
+        assertThat(base.getProperty("ateng.boot.web.ratelimit.enabled")).isEqualTo(true);
+        assertThat(base.getProperty("ateng.boot.web.ratelimit.key-prefix"))
+                .isEqualTo("${SOLID_REDIS_KEY_PREFIX:solid:}rate_limit:");
+        assertThat(base.getProperty("ateng.boot.web.ratelimit.fail-open")).isEqualTo(true);
+
+        List<PropertySource<?>> testSources = loader.load("test", new ClassPathResource("application-test.yml"));
+        assertThat(testSources).hasSize(1);
+        assertThat(testSources.getFirst().getProperty("ateng.boot.web.ratelimit.enabled")).isEqualTo(false);
+
         List<PropertySource<?>> devSources = loader.load("dev", new ClassPathResource("application-dev.yml"));
         assertThat(devSources).hasSize(1);
         assertThat(devSources.getFirst().getProperty("spring.config.import"))

@@ -31,6 +31,8 @@ ateng:
         drain-timeout: 0s
       cors:
         enabled: false
+      ratelimit:
+        enabled: false
     mybatis-plus:
       crypto:
         secret-key: ateng-solid-test-deterministic-key-32b

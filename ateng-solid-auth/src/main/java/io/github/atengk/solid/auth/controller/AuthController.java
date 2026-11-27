@@ -3,6 +3,8 @@ package io.github.atengk.solid.auth.controller;
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.satoken.annotation.Anonymous;
+import io.github.atengk.boot.web.ratelimit.annotation.LimitType;
+import io.github.atengk.boot.web.ratelimit.annotation.RateLimiter;
 import io.github.atengk.boot.web.util.IpUtil;
 import io.github.atengk.boot.web.util.ServletUtil;
 import io.github.atengk.solid.auth.request.AdminLoginRequest;
@@ -43,6 +45,7 @@ public class AuthController {
      * @return 验证码及开关配置包装响应
      */
     @Anonymous
+    @RateLimiter(limitType = LimitType.IP, key = "'auth:captcha'", count = 30, time = 60)
     @GetMapping("/captcha")
     public Result<CaptchaVO> captcha() {
         return Result.success(authService.getCaptcha());
@@ -57,6 +60,7 @@ public class AuthController {
      * @return 登录凭据与生效租户摘要
      */
     @Anonymous
+    @RateLimiter(limitType = LimitType.IP, key = "'auth:login'", count = 30, time = 60)
     @PostMapping("/login")
     public Result<AdminLoginVO> login(
             @Valid @RequestBody AdminLoginRequest request,

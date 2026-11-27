@@ -6,6 +6,8 @@ import io.github.atengk.boot.core.exception.BusinessException;
 import io.github.atengk.boot.core.model.Result;
 import io.github.atengk.boot.excel.util.ExcelWebUtil;
 import io.github.atengk.boot.web.annotation.OperateLog;
+import io.github.atengk.boot.web.ratelimit.annotation.LimitType;
+import io.github.atengk.boot.web.ratelimit.annotation.RateLimiter;
 import io.github.atengk.solid.common.result.CommonBizResultCode;
 import io.github.atengk.solid.system.excel.UserExportVO;
 import io.github.atengk.solid.system.excel.UserImportDTO;
@@ -67,6 +69,7 @@ public class SysUserImportExportController {
      * @return 导入汇总结果（含失败行明细及 15 分钟归属隔离批注下载令牌）
      */
     @SaCheckPermission("system:user:import")
+    @RateLimiter(limitType = LimitType.USER, key = "'system:user:import'", count = 5, time = 60)
     @OperateLog(module = "用户管理", type = OperateTypeEnum.IMPORT, description = "批量导入用户", saveParams = false)
     @PostMapping("/import")
     public Result<ImportResultVO> importUsers(@RequestParam("file") MultipartFile file) {
@@ -107,6 +110,7 @@ public class SysUserImportExportController {
      * @param response HTTP 响应对象
      */
     @SaCheckPermission("system:user:export")
+    @RateLimiter(limitType = LimitType.USER, key = "'system:user:export'", count = 10, time = 60)
     @OperateLog(module = "用户管理", type = OperateTypeEnum.EXPORT, description = "导出用户数据", saveResult = false)
     @PostMapping("/export")
     public void exportUsers(

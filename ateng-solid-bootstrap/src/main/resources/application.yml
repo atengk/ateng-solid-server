@@ -106,6 +106,10 @@ ateng:
         scan-packages:
           - io.github.atengk.solid
           - io.github.atengk.boot.core.audit
+      ratelimit:
+        enabled: true
+        key-prefix: "${SOLID_REDIS_KEY_PREFIX:solid:}rate_limit:"
+        fail-open: true
     async:
       wait-for-tasks-to-complete-on-shutdown: true
       await-termination: 30s
