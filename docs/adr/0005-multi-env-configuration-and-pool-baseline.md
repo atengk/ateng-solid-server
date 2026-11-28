@@ -30,7 +30,7 @@
      - `test`（H2）：Hikari `1~5`、`keepalive-time=0`、禁用优雅停机等待（`0s`）确保单测秒级起停；
      - `dev`（联调共享低配中间件）：Hikari `2~10` + `leak-detection-threshold=10000`；Lettuce `min=2, max=8`；Redisson `threads=4, netty-threads=4, pool=16, min-idle=4`；
      - `prod`（环境变量可覆写）：Hikari `${SOLID_DB_POOL_MIN:5}`~`${SOLID_DB_POOL_MAX:20}` + `keepalive-time=300000` + `max-lifetime=1680000`（28 分钟，早于云 NAT/MySQL 默认 30 分钟断连）；Lettuce `4~16`；Redisson `pool=32, min-idle=8, ping-connection-interval=30s`；主虚拟异步执行器限定 `concurrency-limit`（`dev=64`/`prod=256`）及停机等待。
-3. **现阶段暂不引入 Actuator 并收口 `/pre-stop` MVC 降级端点**：
+3. **现阶段暂不引入 Actuator 并收口 `/pre-stop` MVC 降级端点**（> 演进注记：二期已按 [ADR-0007](./0007-observability-and-actuator-governance.md) 在 `ateng-solid-bootstrap` 引入 `ateng-boot-observability`，将 `actuator-endpoint-enabled` 置为 `true` 并延续 `mvc-endpoint-enabled: false`）：
    - 保持首期精简依赖面，暂不向 `ateng-solid-bootstrap` 引入 `spring-boot-starter-actuator`；
    - 显式设置 `ateng.boot.web.shutdown.mvc-endpoint-enabled: false`，依靠 `server.shutdown: graceful` 与 `SmartLifecycle` 处理 `SIGTERM` 在途请求排空，消除多余路由暴露。
 4. **前端三环境文件追踪与超时对齐**：
@@ -53,4 +53,4 @@
 ## 4. 后果与演进路线
 
 - **正面收益**：开发、离线测试与生产配置职责物理清晰；杜绝 `prod` 缺失敏感变量静默跑偏；MySQL 与 Redis 双引擎连接池、超时保活、泄漏探测及前端超时全链路闭环可控。
-- **代价与演进边界**：生产部署方必须显式提供全部零默认值 `SOLID_*` 环境变量方能启动成功；未来如接入 Kubernetes `preStop` HTTP 钩子或微服务注册中心探针，仅需在 `bootstrap` 增引 `spring-boot-starter-actuator` 并将 `mvc-endpoint-enabled` / `management.endpoints` 按需打开，无需改动任何业务代码。
+- **代价与演进边界**：生产部署方必须显式提供全部零默认值 `SOLID_*` 环境变量方能启动成功；未来如接入 Kubernetes `preStop` HTTP 钩子或微服务注册中心探针，仅需在 `bootstrap` 增引 `spring-boot-starter-actuator` 并将 `mvc-endpoint-enabled` / `management.endpoints` 按需打开，无需改动任何业务代码。（> 已按 [ADR-0007](./0007-observability-and-actuator-governance.md) 在 `bootstrap` 落地 `ateng-boot-observability`、`prod` 双端口隔离及全部带默认值可选环境变量。）

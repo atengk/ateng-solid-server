@@ -19,3 +19,7 @@ _Avoid_: 为虚拟线程无上限放大连接池、缺省引入 `commons-pool2` 
 **架构红线守卫 (Architecture Guard)**:
 在测试期自动化验证模块隔离边界、零 Entity 泄漏、零 `Result<T>` 契约污染、强类型配置与强制构造器注入的静态规则集。
 _Avoid_: 仅靠口头约定约束跨模块依赖
+
+**可观测管理面 (Observability Management Plane)**:
+仅在启动宿主 `ateng-solid-bootstrap` 装配 `ateng-boot-observability`，通过 `prod` 物理双端口隔离（默认 `8081` 绑定 `127.0.0.1`）、子上下文 404 隐身安全过滤器、`liveness`/`readiness` 分级探针（`readiness` 排除 `storage` 并以防假死 `dynamicDatasource` 替代原生 `db`）、`build-info` 元信息与 Prometheus `env` 标签提供可观测与 K8s `preStop` 排空能力，保持 4 个业务/契约模块零编译侵入并向 [`scripts/server.sh`](../scripts/server.sh) 暴露 `--mgmt-port` 与就绪探活契约。
+_Avoid_: 在业务模块引入 Actuator/Micrometer 注解依赖、在 `liveness` 中耦合外部中间件，或将未加 IP/Token 防护的 `preStop` 端点放入全局免密白名单

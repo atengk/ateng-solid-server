@@ -17,6 +17,17 @@ spring:
   flyway:
     enabled: true
 
+management:
+  endpoint:
+    health:
+      show-details: always
+      group:
+        liveness:
+          show-details: always
+        readiness:
+          include: readinessState,dynamicDatasource
+          show-details: always
+
 ateng:
   boot:
     async:
@@ -40,6 +51,16 @@ ateng:
         secret-key: ateng-solid-test-deterministic-key-32b
       sql-log:
         enabled: false
+    observability:
+      health:
+        cache-ttl: 0s
+        redis:
+          enabled: false
+        storage:
+          enabled: false
+      metrics:
+        common-tags:
+          env: test
   solid:
     auth:
       captcha-enabled: false

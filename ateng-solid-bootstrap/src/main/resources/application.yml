@@ -62,6 +62,29 @@ spring:
     validate-on-migrate: true
     out-of-order: false
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState,ping
+        readiness:
+          include: readinessState,dynamicDatasource,redis
+  health:
+    db:
+      enabled: false
+  info:
+    env:
+      enabled: false
+    build:
+      enabled: true
+
 ateng:
   boot:
     core:
@@ -85,10 +108,13 @@ ateng:
         drain-timeout: 10s
         poll-interval: 100ms
         smart-lifecycle-enabled: true
+        actuator-endpoint-enabled: true
         mvc-endpoint-enabled: false
       slow-request:
         enabled: true
         threshold: 3s
+        exclude-urls:
+          - /actuator/pre-stop
       payload-log:
         enabled: false
       operate-log:
@@ -244,6 +270,15 @@ ateng:
           - png
           - webp
         max-file-size: 2MB
+    observability:
+      health:
+        cache-ttl: 15s
+      security:
+        # 显式剔除 pre-stop，仅放行黄金只读探针与 Prometheus 指标；/actuator/pre-stop 须命中白名单 IP 或凭据
+        whitelisted-endpoints:
+          - health
+          - info
+          - prometheus
   solid:
     tenant:
       enabled: false

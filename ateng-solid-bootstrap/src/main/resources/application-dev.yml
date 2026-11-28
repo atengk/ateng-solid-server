@@ -17,6 +17,16 @@ spring:
           max-wait: 3s
           time-between-eviction-runs: 30s
 
+management:
+  endpoint:
+    health:
+      show-details: always
+      group:
+        liveness:
+          show-details: always
+        readiness:
+          show-details: always
+
 ateng:
   boot:
     async:
@@ -50,6 +60,10 @@ ateng:
         mask-sensitive: true
         show-call-location: true
         max-sql-length: 4096
+    observability:
+      metrics:
+        common-tags:
+          env: dev
 
 logging:
   level:

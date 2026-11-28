@@ -7,16 +7,16 @@
 #   2. 独立部署包运行（同级或上级目录放置 ateng-solid-bootstrap-*.jar）
 #
 # 支持子命令：
-#   start       [--profile dev|prod] [--port 8080] [--env-file path] [--jar path]
+#   start       [--profile dev|prod] [--port 8080] [--mgmt-port 8081] [--env-file path] [--jar path]
 #               [--jvm-opts "..."] [--app-args "..."] [--build] [--clean] [--with-tests]
 #               [--fg] [--skip-env-check] [--timeout 60] [--log-dir dir] [--pid-dir dir]
 #               [-- <Spring Boot 应用运行参数...>]
-#   stop        [--port 8080] [--stop-timeout 25] [--force] [--log-dir dir] [--pid-dir dir]
+#   stop        [--port 8080] [--mgmt-port 8081] [--stop-timeout 25] [--force] [--log-dir dir] [--pid-dir dir]
 #   restart     [同 start / stop 参数，支持 --app-args 与 -- 透传]
-#   status      [--port 8080] [--log-dir dir] [--pid-dir dir]
+#   status      [--port 8080] [--mgmt-port 8081] [--log-dir dir] [--pid-dir dir]
 #   logs        [-f|--follow] [-n|--lines 100] [--error] [--log-dir dir] [--pid-dir dir]
 #   build       [--clean] [--with-tests]
-#   check       [--profile dev|prod] [--port 8080] [--env-file path] [--jar path] [--skip-env-check]
+#   check       [--profile dev|prod] [--port 8080] [--mgmt-port 8081] [--env-file path] [--jar path] [--skip-env-check]
 #   help        显示帮助说明（无子命令时默认执行）
 #
 # @author Ateng
@@ -36,6 +36,10 @@ fi
 ACTION=""
 OPT_PROFILE="${SPRING_PROFILES_ACTIVE:-dev}"
 OPT_PORT="${SERVER_PORT:-8080}"
+OPT_MGMT_PORT=""
+OPT_MGMT_PORT_SET=false
+RESOLVED_MGMT_PORT=""
+RESOLVED_MGMT_HOST="127.0.0.1"
 OPT_ENV_FILE="${SOLID_ENV_FILE:-}"
 OPT_JAR="${APP_JAR:-}"
 OPT_JVM_OPTS="${JAVA_OPTS:-}"
@@ -114,6 +118,7 @@ show_help() {
 常用选项（所有带值选项均同时支持 --opt val 与 --opt=val 写法）:
   -p, --profile <dev|prod>    激活 Spring Profile（默认: dev）
       --port <port>           指定服务监听端口（默认: 8080）
+      --mgmt-port <port>      指定 Actuator 管理端口（默认: dev 同服务端口 / prod 8081）
       --env-file <path>       指定环境变量文件（不覆盖宿主机已导出变量）
       --jar <path>            指定可运行 Fat JAR 路径
       --jvm-opts "<opts>"     自定义 JVM 参数（覆盖 JAVA_OPTS 与默认堆大小）
@@ -134,7 +139,8 @@ show_help() {
 
 运行时参数透传（仅 start / restart 支持）:
   -- <args...>                按原样透传给 SolidApplication.main(args)（追加在 --app-args 之后）
-                              注：--server.port* / --spring.profiles.active* 请统一用 --port / -p
+                              注：--server.port* / --management.server.port* / --spring.profiles.active*
+                                  请统一使用 --port / --mgmt-port / -p
 EOF
 }
 
@@ -288,8 +294,8 @@ validate_runtime_args() {
   if [[ "${#RESOLVED_JVM_OPTS_ARR[@]}" -gt 0 ]]; then
     for item in "${RESOLVED_JVM_OPTS_ARR[@]}"; do
       case "$item" in
-        -Dserver.port|-Dserver.port=*|-Dspring.profiles.active|-Dspring.profiles.active=*)
-          log_err "检测到与脚本主参数冲突的 JVM 属性 ($item)，请统一使用脚本选项 --port 或 -p/--profile"
+        -Dserver.port|-Dserver.port=*|-Dmanagement.server.port|-Dmanagement.server.port=*|-Dspring.profiles.active|-Dspring.profiles.active=*)
+          log_err "检测到与脚本主参数冲突的 JVM 属性 ($item)，请统一使用脚本选项 --port / --mgmt-port 或 -p/--profile"
           exit 1
           ;;
       esac
@@ -310,8 +316,8 @@ validate_runtime_args() {
   if [[ "${#RESOLVED_APP_ARGS_ARR[@]}" -gt 0 ]]; then
     for item in "${RESOLVED_APP_ARGS_ARR[@]}"; do
       case "$item" in
-        --server.port|--server.port=*|--spring.profiles.active|--spring.profiles.active=*)
-          log_err "检测到与脚本主参数冲突的 Spring Boot 参数 ($item)，请统一使用脚本选项 --port 或 -p/--profile"
+        --server.port|--server.port=*|--management.server.port|--management.server.port=*|--spring.profiles.active|--spring.profiles.active=*)
+          log_err "检测到与脚本主参数冲突的 Spring Boot 参数 ($item)，请统一使用脚本选项 --port / --mgmt-port 或 -p/--profile"
           exit 1
           ;;
       esac
@@ -410,6 +416,43 @@ resolve_and_load_env() {
   if [[ "$OPT_PROFILE" != "prod" ]]; then
     load_windows_solid_env
   fi
+}
+
+format_url_host() {
+  local host="${1:-127.0.0.1}"
+  if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+    printf '[%s]' "$host"
+  else
+    printf '%s' "$host"
+  fi
+}
+
+resolve_management_endpoint() {
+  local mgmt_port=""
+  if [[ "$OPT_MGMT_PORT_SET" == "true" ]]; then
+    mgmt_port="$OPT_MGMT_PORT"
+  elif [[ "$OPT_PROFILE" == "prod" ]]; then
+    mgmt_port="${SOLID_MANAGEMENT_PORT:-8081}"
+  else
+    mgmt_port="$OPT_PORT"
+  fi
+
+  if ! is_positive_int "$mgmt_port"; then
+    log_err "Actuator 管理端口配置无效（必须为正整数）: $mgmt_port"
+    exit 1
+  fi
+  RESOLVED_MGMT_PORT="$mgmt_port"
+
+  local mgmt_host="127.0.0.1"
+  if [[ "$OPT_PROFILE" == "prod" ]]; then
+    mgmt_host="${SOLID_MANAGEMENT_ADDRESS:-127.0.0.1}"
+  fi
+  case "$mgmt_host" in
+    ""|"0.0.0.0"|"::"|"[::]"|"*")
+      mgmt_host="127.0.0.1"
+      ;;
+  esac
+  RESOLVED_MGMT_HOST="$mgmt_host"
 }
 
 get_java_major() {
@@ -570,6 +613,8 @@ read_runtime_state() {
   STATE_WINPID=""
   STATE_PORT_PID=""
   STATE_PORT="$OPT_PORT"
+  STATE_MGMT_PORT=""
+  STATE_MGMT_HOST=""
   STATE_PROFILE="$OPT_PROFILE"
   STATE_LOG="$CONSOLE_LOG"
   STATE_STARTED_AT=""
@@ -585,6 +630,10 @@ read_runtime_state() {
     [[ -n "$val" ]] && STATE_PORT_PID="$val"
     val="$(meta_get "$META_FILE" "PORT")"
     [[ -n "$val" ]] && STATE_PORT="$val"
+    val="$(meta_get "$META_FILE" "MGMT_PORT")"
+    [[ -n "$val" ]] && STATE_MGMT_PORT="$val"
+    val="$(meta_get "$META_FILE" "MGMT_HOST")"
+    [[ -n "$val" ]] && STATE_MGMT_HOST="$val"
     val="$(meta_get "$META_FILE" "PROFILE")"
     [[ -n "$val" ]] && STATE_PROFILE="$val"
     val="$(meta_get "$META_FILE" "LOG_FILE")"
@@ -613,6 +662,8 @@ PID=$msys_pid
 WINPID=$winpid
 PORT_PID=$port_pid
 PORT=$OPT_PORT
+MGMT_PORT=$RESOLVED_MGMT_PORT
+MGMT_HOST=$RESOLVED_MGMT_HOST
 PROFILE=$OPT_PROFILE
 JAR_PATH=$jar_path
 LOG_FILE=$OPT_LOG_DIR/server.log
@@ -813,6 +864,7 @@ cmd_check() {
   fi
 
   resolve_and_load_env
+  resolve_management_endpoint
 
   if ! check_profile_config; then
     failed=true
@@ -843,6 +895,20 @@ cmd_check() {
     log_ok "端口 $OPT_PORT 当前空闲可用"
   fi
 
+  if [[ "$RESOLVED_MGMT_PORT" != "$OPT_PORT" ]]; then
+    local mgmt_pids
+    mgmt_pids="$(get_port_pids "$RESOLVED_MGMT_PORT" || true)"
+    if [[ -n "$mgmt_pids" ]]; then
+      if [[ -n "$STATE_PID" ]] && is_pid_alive "$STATE_PID" "$STATE_WINPID"; then
+        log_ok "管理端口 $RESOLVED_MGMT_PORT 由本脚本纳管实例监听中 (PID: $STATE_PID)"
+      else
+        log_warn "管理端口 $RESOLVED_MGMT_PORT 已被外部进程占用 (PID: $(printf '%s' "$mgmt_pids" | tr '\n' ' '))"
+      fi
+    else
+      log_ok "管理端口 $RESOLVED_MGMT_PORT 当前空闲可用"
+    fi
+  fi
+
   if [[ "$failed" == "true" ]]; then
     exit 1
   fi
@@ -858,6 +924,7 @@ cmd_start() {
     OPT_APP_ARGS="${SOLID_APP_ARGS:-}"
   fi
   validate_runtime_args
+  resolve_management_endpoint
   read_runtime_state
 
   # 1. 幂等校验：若已由脚本启动且存活
@@ -880,6 +947,14 @@ cmd_start() {
   if [[ -n "$existing_port_pids" ]]; then
     log_err "端口 $OPT_PORT 已被其他进程占用 (PID: $(printf '%s' "$existing_port_pids" | tr '\n' ' '))，请先停止占用进程或改用 --port 指定其他端口"
     exit 1
+  fi
+  if [[ "$RESOLVED_MGMT_PORT" != "$OPT_PORT" ]]; then
+    local existing_mgmt_pids
+    existing_mgmt_pids="$(get_port_pids "$RESOLVED_MGMT_PORT" || true)"
+    if [[ -n "$existing_mgmt_pids" ]]; then
+      log_err "管理端口 $RESOLVED_MGMT_PORT 已被其他进程占用 (PID: $(printf '%s' "$existing_mgmt_pids" | tr '\n' ' '))，请先停止占用进程或改用 --mgmt-port 指定其他端口"
+      exit 1
+    fi
   fi
 
   # 3. 校验环境配置
@@ -937,11 +1012,18 @@ cmd_start() {
     "--spring.profiles.active=${OPT_PROFILE}"
     "--server.port=${OPT_PORT}"
   )
+  if [[ "$OPT_MGMT_PORT_SET" == "true" ]]; then
+    app_args+=("--management.server.port=${OPT_MGMT_PORT}")
+  fi
   if [[ "${#RESOLVED_APP_ARGS_ARR[@]}" -gt 0 ]]; then
     app_args+=("${RESOLVED_APP_ARGS_ARR[@]}")
   fi
 
-  log_info "正在启动 ateng-solid-server (Profile: $OPT_PROFILE | Port: $OPT_PORT | JAR: $(basename "$jar_path"))..."
+  local mgmt_desc=""
+  if [[ "$RESOLVED_MGMT_PORT" != "$OPT_PORT" ]]; then
+    mgmt_desc=" | MgmtPort: $RESOLVED_MGMT_PORT"
+  fi
+  log_info "正在启动 ateng-solid-server (Profile: $OPT_PROFILE | Port: $OPT_PORT${mgmt_desc} | JAR: $(basename "$jar_path"))..."
   if [[ "${#RESOLVED_APP_ARGS_ARR[@]}" -gt 0 ]]; then
     log_info "应用附加运行参数: ${RESOLVED_APP_ARGS_ARR[*]}"
   fi
@@ -971,7 +1053,10 @@ cmd_start() {
   # 写初版状态文件（就绪后再补齐 PORT_PID）
   write_runtime_state "$spawned_pid" "$winpid" "" "$jar_path"
 
-  # 6. 阻塞轮询就绪状态
+  # 6. 阻塞轮询就绪状态（双端口模式下同时要求业务端口与管理端口监听，且优先校验 /actuator/health/readiness HTTP 200）
+  local probe_url_host
+  probe_url_host="$(format_url_host "$RESOLVED_MGMT_HOST")"
+  local readiness_url="http://${probe_url_host}:${RESOLVED_MGMT_PORT}/actuator/health/readiness"
   local elapsed=0
   local ready=false
   while [[ "$elapsed" -lt "$OPT_START_TIMEOUT" ]]; do
@@ -981,10 +1066,15 @@ cmd_start() {
       clear_runtime_state
       exit 1
     fi
+    local ports_listening=false
     if is_port_listening "$OPT_PORT"; then
+      if [[ "$RESOLVED_MGMT_PORT" == "$OPT_PORT" ]] || is_port_listening "$RESOLVED_MGMT_PORT"; then
+        ports_listening=true
+      fi
+    fi
+    if [[ "$ports_listening" == "true" ]]; then
       if command -v curl >/dev/null 2>&1; then
-        # 任意 HTTP 响应（如 200/401/404）均说明 Tomcat 与 DispatcherServlet 已接管请求
-        if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${OPT_PORT}/"; then
+        if curl -sf -o /dev/null --max-time 2 "$readiness_url"; then
           ready=true
           break
         fi
@@ -998,7 +1088,7 @@ cmd_start() {
   done
 
   if [[ "$ready" != "true" ]]; then
-    log_err "等待后端端口 $OPT_PORT 就绪超时 (${OPT_START_TIMEOUT}s)，正在清理未就绪进程并回显末尾日志："
+    log_err "等待后端端口 $OPT_PORT (管理端口 $RESOLVED_MGMT_PORT) 就绪超时 (${OPT_START_TIMEOUT}s)，正在清理未就绪进程并回显末尾日志："
     stop_process_gracefully "$spawned_pid" "$winpid" "" 10
     clear_runtime_state
     [[ -f "$console_log" ]] && tail -n 30 "$console_log" >&2 || true
@@ -1011,6 +1101,7 @@ cmd_start() {
 
   log_ok "ateng-solid-server 启动成功！"
   printf "  - 服务地址: http://127.0.0.1:%s\n" "$OPT_PORT"
+  printf "  - 管理探针: http://%s:%s/actuator/health\n" "$probe_url_host" "$RESOLVED_MGMT_PORT"
   printf "  - 运行环境: %s\n" "$OPT_PROFILE"
   printf "  - 进程标识: PID=%s%s\n" "$spawned_pid" "${winpid:+ (WINPID=$winpid)}"
   printf "  - 日志文件: %s\n" "$console_log"
@@ -1085,6 +1176,21 @@ cmd_restart() {
 cmd_status() {
   read_runtime_state
   local target_port="${STATE_PORT:-$OPT_PORT}"
+  local target_profile="${STATE_PROFILE:-$OPT_PROFILE}"
+  local target_mgmt_port="${STATE_MGMT_PORT:-}"
+  if [[ -z "$target_mgmt_port" ]]; then
+    if [[ "$OPT_MGMT_PORT_SET" == "true" ]]; then
+      target_mgmt_port="$OPT_MGMT_PORT"
+    elif [[ "$target_profile" == "prod" ]]; then
+      target_mgmt_port="${SOLID_MANAGEMENT_PORT:-8081}"
+    else
+      target_mgmt_port="$target_port"
+    fi
+  fi
+  local target_mgmt_host="${STATE_MGMT_HOST:-127.0.0.1}"
+  local mgmt_url_host
+  mgmt_url_host="$(format_url_host "$target_mgmt_host")"
+
   local port_pids
   port_pids="$(get_port_pids "$target_port" || true)"
 
@@ -1093,11 +1199,18 @@ cmd_status() {
     local listen_desc="端口监听中"
     if ! is_port_listening "$target_port"; then
       listen_desc="启动中/端口未就绪"
+    elif [[ "$target_mgmt_port" != "$target_port" ]] && ! is_port_listening "$target_mgmt_port"; then
+      listen_desc="启动中/管理端口未就绪"
     fi
-    printf "%b[RUNNING]%b ateng-solid-server [profile:%s | port:%s | pid:%s%s | %s]\n" \
-      "${C_GREEN}" "${C_RESET}" "${STATE_PROFILE:-dev}" "$target_port" "$STATE_PID" \
+    local mgmt_tag=""
+    if [[ "$target_mgmt_port" != "$target_port" ]]; then
+      mgmt_tag=" | mgmt_port:${target_mgmt_port}"
+    fi
+    printf "%b[RUNNING]%b ateng-solid-server [profile:%s | port:%s%s | pid:%s%s | %s]\n" \
+      "${C_GREEN}" "${C_RESET}" "$target_profile" "$target_port" "$mgmt_tag" "$STATE_PID" \
       "${STATE_WINPID:+ | winpid:$STATE_WINPID}" "$listen_desc"
     printf "          url: http://127.0.0.1:%s\n" "$target_port"
+    printf "          actuator: http://%s:%s/actuator/health\n" "$mgmt_url_host" "$target_mgmt_port"
     printf "          log: %s\n" "$STATE_LOG"
     if [[ -n "$STATE_STARTED_AT" ]]; then
       printf "          started: %s\n" "$STATE_STARTED_AT"
@@ -1155,7 +1268,7 @@ parse_args() {
         normalized_args+=("--")
         shift
         ;;
-      -p=*|--profile=*|--port=*|--env-file=*|--jar=*|--jvm-opts=*|--app-args=*|--log-dir=*|--pid-dir=*|--timeout=*|--stop-timeout=*|-n=*|--lines=*)
+      -p=*|--profile=*|--port=*|--mgmt-port=*|--env-file=*|--jar=*|--jvm-opts=*|--app-args=*|--log-dir=*|--pid-dir=*|--timeout=*|--stop-timeout=*|-n=*|--lines=*)
         normalized_args+=("${1%%=*}" "${1#*=}")
         shift
         ;;
@@ -1201,6 +1314,13 @@ parse_args() {
         [[ "$#" -ge 2 ]] || { log_err "--port 缺少参数"; exit 1; }
         OPT_PORT="$2"
         is_positive_int "$OPT_PORT" || { log_err "--port 必须为正整数: $OPT_PORT"; exit 1; }
+        shift 2
+        ;;
+      --mgmt-port)
+        [[ "$#" -ge 2 ]] || { log_err "--mgmt-port 缺少参数"; exit 1; }
+        OPT_MGMT_PORT="$2"
+        is_positive_int "$OPT_MGMT_PORT" || { log_err "--mgmt-port 必须为正整数: $OPT_MGMT_PORT"; exit 1; }
+        OPT_MGMT_PORT_SET=true
         shift 2
         ;;
       --env-file)

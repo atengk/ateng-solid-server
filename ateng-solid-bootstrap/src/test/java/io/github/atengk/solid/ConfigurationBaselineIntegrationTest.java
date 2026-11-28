@@ -6,6 +6,7 @@ import io.github.atengk.boot.core.properties.AsyncPoolProperties;
 import io.github.atengk.boot.core.properties.AsyncProperties;
 import io.github.atengk.boot.core.properties.CoreProperties;
 import io.github.atengk.boot.mybatisplus.properties.MybatisPlusProperties;
+import io.github.atengk.boot.observability.properties.ObservabilityProperties;
 import io.github.atengk.boot.redis.cache.twolevel.l1.L1MemoryCacheFactory;
 import io.github.atengk.boot.redis.properties.RedisProperties;
 import io.github.atengk.boot.satoken.properties.SaTokenProperties;
@@ -177,13 +178,28 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(environment.getProperty("spring.flyway.enabled", Boolean.class)).isTrue();
         assertThat(coreProperties.getSlowAlert().getDefaultThreshold()).isEqualTo(Duration.ofMillis(500));
         assertThat(webProperties.getShutdown().getMvcEndpointEnabled()).isFalse();
+        assertThat(webProperties.getShutdown().isActuatorEndpointEnabled()).isTrue();
         assertThat(webProperties.getShutdown().isEnabled()).isFalse();
         assertThat(webProperties.getShutdown().getDrainTimeout()).isEqualTo(Duration.ZERO);
+        assertThat(webProperties.getSlowRequest().getExcludeUrls()).contains("/actuator/pre-stop");
         assertThat(webProperties.getPayloadLog().isEnabled()).isFalse();
         assertThat(webProperties.getCors().isEnabled()).isFalse();
         assertThat(webProperties.getTrustedProxies()).isEmpty();
         assertThat(webProperties.getOperateLog().getDefaultExcludeParams())
                 .contains("password", "phone", "email", "adminPassword", "configValue");
+
+        ObservabilityProperties observabilityProperties = Binder.get(environment)
+                .bind("ateng.boot.observability", ObservabilityProperties.class)
+                .get();
+        assertThat(observabilityProperties.isEnabled()).isTrue();
+        assertThat(observabilityProperties.getHealth().getCacheTtl()).isEqualTo(Duration.ZERO);
+        assertThat(observabilityProperties.getHealth().getRedis().isEnabled()).isFalse();
+        assertThat(observabilityProperties.getHealth().getStorage().isEnabled()).isFalse();
+        assertThat(observabilityProperties.getMetrics().getCommonTags()).containsEntry("env", "test");
+        assertThat(observabilityProperties.getSecurity().isLockdownEnabled()).isTrue();
+        assertThat(observabilityProperties.getSecurity().isManagementContextEnabled()).isTrue();
+        assertThat(observabilityProperties.getSecurity().getWhitelistedEndpoints())
+                .containsExactly("health", "info", "prometheus");
         RateLimiterProperties rateLimiterProperties = Binder.get(environment)
                 .bind("ateng.boot.web.ratelimit", RateLimiterProperties.class)
                 .get();
@@ -243,19 +259,52 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(base.getProperty("ateng.boot.web.idempotent.key-prefix"))
                 .isEqualTo("${SOLID_REDIS_KEY_PREFIX:solid:}idempotent:");
         assertThat(base.getProperty("ateng.boot.web.idempotent.fail-open")).isEqualTo(true);
+        assertThat(base.getProperty("management.endpoints.web.exposure.include")).isEqualTo("health,info,prometheus");
+        assertThat(base.getProperty("management.endpoint.health.probes.enabled")).isEqualTo(true);
+        assertThat(base.getProperty("management.endpoint.health.group.liveness.include"))
+                .isEqualTo("livenessState,ping");
+        assertThat(base.getProperty("management.endpoint.health.group.readiness.include"))
+                .isEqualTo("readinessState,dynamicDatasource,redis");
+        assertThat(base.getProperty("management.health.db.enabled")).isEqualTo(false);
+        assertThat(base.getProperty("management.info.env.enabled")).isEqualTo(false);
+        assertThat(base.getProperty("management.info.build.enabled")).isEqualTo(true);
+        assertThat(base.getProperty("ateng.boot.web.shutdown.actuator-endpoint-enabled")).isEqualTo(true);
+        assertThat(base.getProperty("ateng.boot.web.shutdown.mvc-endpoint-enabled")).isEqualTo(false);
+        assertThat(base.getProperty("ateng.boot.web.slow-request.exclude-urls[0]")).isEqualTo("/actuator/pre-stop");
+        assertThat(base.getProperty("ateng.boot.observability.health.cache-ttl")).isEqualTo("15s");
+        assertThat(base.getProperty("ateng.boot.observability.security.whitelisted-endpoints[0]")).isEqualTo("health");
+        assertThat(base.getProperty("ateng.boot.observability.security.whitelisted-endpoints[1]")).isEqualTo("info");
+        assertThat(base.getProperty("ateng.boot.observability.security.whitelisted-endpoints[2]"))
+                .isEqualTo("prometheus");
 
         List<PropertySource<?>> testSources = loader.load("test", new ClassPathResource("application-test.yml"));
         assertThat(testSources).hasSize(1);
-        assertThat(testSources.getFirst().getProperty("ateng.boot.web.ratelimit.enabled")).isEqualTo(false);
-        assertThat(testSources.getFirst().getProperty("ateng.boot.web.idempotent.enabled")).isEqualTo(false);
+        PropertySource<?> testYaml = testSources.getFirst();
+        assertThat(testYaml.getProperty("ateng.boot.web.ratelimit.enabled")).isEqualTo(false);
+        assertThat(testYaml.getProperty("ateng.boot.web.idempotent.enabled")).isEqualTo(false);
+        assertThat(testYaml.getProperty("management.endpoint.health.show-details")).isEqualTo("always");
+        assertThat(testYaml.getProperty("management.endpoint.health.group.liveness.show-details")).isEqualTo("always");
+        assertThat(testYaml.getProperty("management.endpoint.health.group.readiness.include"))
+                .isEqualTo("readinessState,dynamicDatasource");
+        assertThat(testYaml.getProperty("management.endpoint.health.group.readiness.show-details"))
+                .isEqualTo("always");
+        assertThat(testYaml.getProperty("ateng.boot.observability.health.cache-ttl")).isEqualTo("0s");
+        assertThat(testYaml.getProperty("ateng.boot.observability.health.redis.enabled")).isEqualTo(false);
+        assertThat(testYaml.getProperty("ateng.boot.observability.health.storage.enabled")).isEqualTo(false);
+        assertThat(testYaml.getProperty("ateng.boot.observability.metrics.common-tags.env")).isEqualTo("test");
 
         List<PropertySource<?>> devSources = loader.load("dev", new ClassPathResource("application-dev.yml"));
         assertThat(devSources).hasSize(1);
-        assertThat(devSources.getFirst().getProperty("spring.config.import"))
+        PropertySource<?> devYaml = devSources.getFirst();
+        assertThat(devYaml.getProperty("spring.config.import"))
                 .isEqualTo("optional:classpath:application-local.yml");
-        assertThat(devSources.getFirst().getProperty("spring.datasource.hikari.maximum-pool-size")).isEqualTo(10);
-        assertThat(devSources.getFirst().getProperty("spring.data.redis.lettuce.pool.max-active")).isEqualTo(8);
-        assertThat(devSources.getFirst().getProperty("ateng.boot.redis.redisson.connection-pool-size")).isEqualTo(16);
+        assertThat(devYaml.getProperty("spring.datasource.hikari.maximum-pool-size")).isEqualTo(10);
+        assertThat(devYaml.getProperty("spring.data.redis.lettuce.pool.max-active")).isEqualTo(8);
+        assertThat(devYaml.getProperty("ateng.boot.redis.redisson.connection-pool-size")).isEqualTo(16);
+        assertThat(devYaml.getProperty("management.endpoint.health.show-details")).isEqualTo("always");
+        assertThat(devYaml.getProperty("management.endpoint.health.group.liveness.show-details")).isEqualTo("always");
+        assertThat(devYaml.getProperty("management.endpoint.health.group.readiness.show-details")).isEqualTo("always");
+        assertThat(devYaml.getProperty("ateng.boot.observability.metrics.common-tags.env")).isEqualTo("dev");
 
         List<PropertySource<?>> prodSources = loader.load("prod", new ClassPathResource("application-prod.yml"));
         assertThat(prodSources).hasSize(1);
@@ -278,6 +327,23 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(prod.getProperty("ateng.boot.mybatis-plus.tenant.enabled")).isEqualTo("${SOLID_TENANT_ENABLED:false}");
         assertThat(prod.getProperty("ateng.solid.init.super-admin-password"))
                 .isEqualTo("${SOLID_INIT_SUPER_ADMIN_PASSWORD}");
+        assertThat(prod.getProperty("management.server.port")).isEqualTo("${SOLID_MANAGEMENT_PORT:8081}");
+        assertThat(prod.getProperty("management.server.address")).isEqualTo("${SOLID_MANAGEMENT_ADDRESS:127.0.0.1}");
+        assertThat(prod.getProperty("management.endpoints.web.exposure.include"))
+                .isEqualTo("${SOLID_ACTUATOR_EXPOSURE_INCLUDE:health,info,prometheus,preStop}");
+        assertThat(prod.getProperty("management.endpoint.health.show-details"))
+                .isEqualTo("${SOLID_ACTUATOR_SHOW_DETAILS:never}");
+        assertThat(prod.getProperty("management.endpoint.health.group.liveness.show-details"))
+                .isEqualTo("${SOLID_ACTUATOR_SHOW_DETAILS:never}");
+        assertThat(prod.getProperty("management.endpoint.health.group.readiness.show-details"))
+                .isEqualTo("${SOLID_ACTUATOR_SHOW_DETAILS:never}");
+        assertThat(prod.getProperty("ateng.boot.observability.metrics.common-tags.env")).isEqualTo("prod");
+        assertThat(prod.getProperty("ateng.boot.observability.security.stealth-mode")).isEqualTo(true);
+        assertThat(prod.getProperty("ateng.boot.observability.security.token")).isEqualTo("${SOLID_ACTUATOR_TOKEN:}");
+        assertThat(prod.getProperty("ateng.boot.observability.security.allowed-ip-ranges"))
+                .isEqualTo("${SOLID_ACTUATOR_ALLOWED_IPS:127.0.0.1,::1}");
+        assertThat(prod.getProperty("ateng.boot.observability.security.trusted-proxies"))
+                .isEqualTo("${SOLID_TRUSTED_PROXIES:}");
     }
 
     @Test

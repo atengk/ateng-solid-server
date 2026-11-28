@@ -32,6 +32,12 @@
             <artifactId>ateng-boot-flyway</artifactId>
         </dependency>
 
+        <!-- 可观测与 Actuator 管理面底座（仅限启动宿主装配，业务模块零编译依赖；dev 消费 1.2.1-SNAPSHOT 含 B24/B25，合入 main 前锁回正式版） -->
+        <dependency>
+            <groupId>io.github.atengk</groupId>
+            <artifactId>ateng-boot-observability</artifactId>
+        </dependency>
+
         <!-- Redis Lettuce 连接池支撑（版本由 Spring Boot BOM 纳管，显式引入以激活 spring.data.redis.lettuce.pool.*） -->
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -92,6 +98,12 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <executions>
+                    <execution>
+                        <id>build-info</id>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                    </execution>
                     <execution>
                         <goals>
                             <goal>repackage</goal>

@@ -13,7 +13,7 @@
   - `ateng-solid-auth`（`/admin/auth/**`，`101xxx`，仅依赖 `common` + `system-api`，严禁依赖 `system` 实现包，零自建持久化表）；
   - `ateng-solid-bootstrap`（单体启动宿主、双模配置、事件桥接与 ArchUnit 守卫）。
 - **跨模块硬边界**：严禁跨模块注入对方 `Mapper`、跨模块 SQL JOIN 或数据库物理外键；二开/扩展（`ext-*`/`biz-*`）通过独立 Maven 模块 + `AutoConfiguration.imports` + SPI 装配，不改内核源码、不向内核主表加列（首期不建空目录）。
-- **依赖克制**：按需引入 `ateng-boot-*` Starter（`core`/`web`/`mybatis-plus`/`redis`/`satoken`/`excel`/`storage`/`flyway`）；严禁引入 `ateng-boot-all`、首期 `ateng-boot-observability`、单体业务模块内 `ateng-cloud-*` 运行时依赖，以及 `hutool-all`/`guava`/`commons-collections`；不强依赖 `ateng-boot-openapi`。
+- **依赖克制**：按需引入 `ateng-boot-*` Starter（`core`/`web`/`mybatis-plus`/`redis`/`satoken`/`excel`/`storage`/`flyway`），并**允许仅在 `ateng-solid-bootstrap` 引入 `ateng-boot-observability`**（`common`/`system-api`/`system`/`auth` 业务模块严禁引入观测或 Actuator 编译依赖）；严禁引入 `ateng-boot-all`、单体业务模块内 `ateng-cloud-*` 运行时依赖，以及 `hutool-all`/`guava`/`commons-collections`；不强依赖 `ateng-boot-openapi`。
 - **底层零补丁与主干锁版门禁（Zero Workaround, Lock on `main`）**：遇 `ateng-boot` / `ateng-cloud` 能力不足或缺陷，严禁上层补丁将就、严禁底座写死本项目约定，**应先向对应底座提通用 Issue 并登记增强清单，未经用户明确确认严禁直接修改 `ateng-boot` / `ateng-cloud` 源码**；仅在获准协同改造后于底座 `dev` 本地改造并提交底座 `dev`，刷新 `-SNAPSHOT` 后可在 `dev` 继续开发、自测与提交（允许联调期远端 `dev` CI 暂红），**合入 `main` 与发版前必须锁回递进正式版**（由 `main` `pre-commit`、`pre-push`、`main` CI 与 `release.yml` 拦截 `-SNAPSHOT`）。
 
 ---

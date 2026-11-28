@@ -47,6 +47,23 @@ springdoc:
 knife4j:
   enable: false
 
+management:
+  server:
+    port: ${SOLID_MANAGEMENT_PORT:8081}
+    address: ${SOLID_MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    web:
+      exposure:
+        include: ${SOLID_ACTUATOR_EXPOSURE_INCLUDE:health,info,prometheus,preStop}
+  endpoint:
+    health:
+      show-details: ${SOLID_ACTUATOR_SHOW_DETAILS:never}
+      group:
+        liveness:
+          show-details: ${SOLID_ACTUATOR_SHOW_DETAILS:never}
+        readiness:
+          show-details: ${SOLID_ACTUATOR_SHOW_DETAILS:never}
+
 ateng:
   boot:
     core:
@@ -117,6 +134,15 @@ ateng:
         secret-key: ${SOLID_S3_SECRET_KEY}
         path-style: ${SOLID_S3_PATH_STYLE:true}
         auto-create-bucket: ${SOLID_S3_AUTO_CREATE_BUCKET:false}
+    observability:
+      metrics:
+        common-tags:
+          env: prod
+      security:
+        stealth-mode: true
+        token: ${SOLID_ACTUATOR_TOKEN:}
+        allowed-ip-ranges: ${SOLID_ACTUATOR_ALLOWED_IPS:127.0.0.1,::1}
+        trusted-proxies: ${SOLID_TRUSTED_PROXIES:}
   solid:
     tenant:
       enabled: ${SOLID_TENANT_ENABLED:false}
