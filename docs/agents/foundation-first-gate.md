@@ -47,7 +47,7 @@
 
 | 环节 | 后端（`ateng-boot` / `ateng-cloud` ➔ `ateng-solid-server`） | 前端（`ateng-ui` ➔ `ateng-solid-admin-web`） |
 | :--- | :--- | :--- |
-| **本地产物推送** | 底座切换至递增 **`-SNAPSHOT`** 版本（如 `1.2.1-SNAPSHOT`）执行 `mvn install -DskipTests` | 在 `ateng-ui` 先执行 **`pnpm pack`** 消解 `workspace:*`，解包后执行 **`yalc publish --push`** |
-| **避坑红线** | 严禁使用已发布或即将发布的正式版本号反复 `mvn install`（防 `~/.m2` 脏读） | 严禁在 `ateng-ui` 子包裸跑 `yalc push`（会残留 `workspace:*`），严禁 `pnpm link`（防双 Vue 实例） |
-| **上层接入与 `dev` 提交** | `ateng-solid-server/pom.xml` 切至 `-SNAPSHOT` 联调；通过本地 `mvn clean test` 后可直接提交 `dev` | 执行 `yalc add @atengk/...` 接入；代码未刷新时运行 `pnpm dev:force`；通过本地四合一检查后可直接提交 `dev` |
+| **本地产物推送** | 底座切换至递增 **`-SNAPSHOT`** 版本（如 `1.2.1-SNAPSHOT`）执行 `mvn install -DskipTests` | 在 `ateng-ui` 先执行 **`pnpm pack`** 消解 `workspace:*`，解包后必须附加 `--replace` 执行 **`yalc publish --push --replace`**（因 `pnpm pack` 会将 tarball 内文件 mtime 归一化为 `1985-10-26`，未改动样式字节数时省略 `--replace` 会被 Yalc 增量复制跳过，导致 JS/CSS Vue `data-v-*` scoped hash 失配） |
+| **避坑红线** | 严禁使用已发布或即将发布的正式版本号反复 `mvn install`（防 `~/.m2` 脏读） | 严禁在 `ateng-ui` 子包裸跑 `yalc push`（会残留 `workspace:*`），严禁省略 `--replace` 增量推送或更新 `pnpm pack` 产物，严禁 `pnpm link`（防双 Vue 实例） |
+| **上层接入与 `dev` 提交** | `ateng-solid-server/pom.xml` 切至 `-SNAPSHOT` 联调；通过本地 `mvn clean test` 后可直接提交 `dev` | 首次执行 `yalc add @atengk/...` 接入；二次刷新务必执行 **`yalc update @atengk/... --replace && pnpm install --force`**（若所用 `yalc` 版本在消费侧忽略 `update --replace`，可先 `yalc remove` 再 `yalc add` 重建 `.yalc` 并配 `pnpm install --offline --frozen-lockfile`），联调服务须运行 `pnpm dev:force` 清理 Vite 预构建缓存；通过本地四合一检查后可直接提交 `dev` |
 | **还原锁版与 `main` 守门** | 合并 `main` 前待底座发正式版并锁回正式版本号；`.githooks/pre-commit`（`main`）、`pre-push`（`main`/`v*`）、`main` CI 与 `release.yml` 硬拦截 `-SNAPSHOT` | 合并 `main` 前待底座发 npm 正式版后执行 `yalc remove --all && pnpm up @atengk/*`；`.githooks/pre-commit`（`main`）、`pre-push`（`main`/`v*`）、`main` CI 与 `release.yml` 硬拦截 `file:.yalc`/`file:../`/`link:`/`.tgz` |
