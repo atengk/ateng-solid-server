@@ -59,3 +59,11 @@ _Avoid_: 粗暴删除半选祖先目录破坏既定角色授权树，或在事�
 **列表脱敏与详情真明文 (List Masking vs Detail Plaintext)**:
 高频列表与树节点视图（`UserVO`、`DeptTreeVO`）的联系手机号/邮箱由服务端在 Jackson 出界序列化阶段通过 `@FieldSensitive` 动态脱敏；编辑详情（`UserDetailVO`、`DeptVO`、`PersonalProfileDTO`）保留内存真明文以支持表单无污染编辑保存。
 _Avoid_: 在分页或树形列表接口直接输出全量明文手机号/邮箱，或在 `GET /{id}` 编辑详情接口回传星号掩码导致表单回写脏数据
+
+**RBAC 防提权守卫 (RBAC Privilege Guard)**:
+在用户赋权、角色授菜单及跨租户校验链路中强制执行同租户归属校验、子集授权防越权与防降权边界（非平台超管不可授予/取消超出自身持有范围的权限或篡改 `super_admin`），同时在跨租户引用计数中过滤已删除租户（`sys_tenant.deleted = 0`）。
+_Avoid_: 仅依赖前端按钮隐藏，或在服务端直接覆盖写入客户端提交的全量角色/菜单 ID 列表
+
+**多租户双开关一致性校验 (Tenant Toggle Consistency Guard)**:
+在应用启动阶段校验多租户能力开关与依赖数据权限规则（如配置禁用状态与跨租户边界冲突）的一致性，阻断矛盾运行配置带病启动。
+_Avoid_: 在多租户关闭或异常组合配置下静默降级运行导致越权暴露

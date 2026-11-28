@@ -15,12 +15,9 @@
 
 ## 2. 漏洞报告渠道 (Reporting a Vulnerability)
 
-### 方式一：GitHub 私密安全报告 (推荐首选)
+### GitHub 私密安全报告 (唯一官方渠道)
 1. 前往本仓库的 **[Security -> Advisories](https://github.com/atengk/ateng-solid-server/security/advisories/new)** 页面；
 2. 点击 **「Report a vulnerability」** 提交报告（仅仓库维护者可见）。
-
-### 方式二：安全联络邮箱
-- **安全联系邮箱**：`security@example.com`（*请在邮件主题中注明 `[SECURITY VULNERABILITY - ATENG-SOLID-SERVER]`*）
 
 ---
 

@@ -190,7 +190,7 @@
 | :--- | :--- | :--- |
 | `id` | `BIGINT NOT NULL` | 主键（平台内置 `super_admin` 固定为 `1`） |
 | `tenant_id` | `BIGINT NOT NULL DEFAULT 0` | 租户 ID |
-| `role_name` | `VARCHAR(50) NOT NULL` | 角色名称（表单校验 `2~30`；不加数据库唯一约束） |
+| `role_name` | `VARCHAR(50) NOT NULL` | 角色名称（表单校验 `2~30`；由 `uk_role_tenant_name_deleted` 与服务层联合约束同租户未删唯一） |
 | `role_key` | `VARCHAR(64) NOT NULL` | 角色编码（同租户未删唯一；普通租户严禁使用 `super_admin`/`admin`） |
 | `data_scope` | `TINYINT NOT NULL DEFAULT 1` | 数据范围（`1=ALL`, `2=CUSTOM`, `3=DEPT`, `4=DEPT_AND_CHILD`, `5=SELF`） |
 | `menu_check_strictly` | `TINYINT NOT NULL DEFAULT 1` | 菜单权限树是否父子联动（`1` 联动 / `0` 独立） |
@@ -199,7 +199,7 @@
 | `status` | `TINYINT NOT NULL DEFAULT 0` | 状态（`0` 正常 / `1` 停用） |
 | `remark` | `VARCHAR(500) NULL` | 备注 |
 
-- **索引**：`PRIMARY KEY (id)`、`UNIQUE KEY uk_role_tenant_key_deleted (tenant_id, role_key, deleted)`、`KEY idx_role_tenant_sort (tenant_id, sort)`
+- **索引**：`PRIMARY KEY (id)`、`UNIQUE KEY uk_role_tenant_key_deleted (tenant_id, role_key, deleted)`、`UNIQUE KEY uk_role_tenant_name_deleted (tenant_id, role_name, deleted)`、`KEY idx_role_tenant_sort (tenant_id, sort)`
 
 #### 10. `sys_user`（用户表 · `BaseLogicEntity` + `TenantAware<Long>`）
 | 列名 | 类型与约束 | 业务说明 |
@@ -326,7 +326,7 @@
 
 ### 5.1 脚本目录与安全治理
 - 脚本归属：`ateng-solid-system/src/main/resources/db/migration/system/`（单体 `bootstrap` 与后续 `cloud-system` 100% 共享同一份脚本）；
-- 版本命名：`V1.0.0__system_init_schema.sql`（17 张表与索引）、`V1.0.1__system_init_seed.sql`（确定性非敏感元数据种子）；已合入 `dev`/`main` 的迁移文件严禁修改，后续变更仅允许追加新版本号脚本；
+- 版本命名：`V1.0.0__system_init_schema.sql`（17 张表与索引）、`V1.0.1__system_init_seed.sql`（确定性非敏感元数据种子）、`V1.0.2__add_role_name_unique_index.sql`（补齐 `sys_role` 租户内角色名称联合唯一索引 `uk_role_tenant_name_deleted`）；已合入 `dev`/`main` 的迁移文件严禁修改，后续变更仅允许追加新版本号脚本；
 - 安全开关：`validate-on-migrate: true`、`out-of-order: false`、`ateng-boot-flyway` 生产环境 `ProductionSafetyGuard` 自动拦截 `clean` 与未豁免 `DROP/TRUNCATE`；
 - 超管账号初始化仍严格遵循“SQL 脱敏 + `SuperAdminBootstrapper` 动态 PBKDF2 落库”，**严禁在 SQL 中硬编码超管密码哈希**。
 

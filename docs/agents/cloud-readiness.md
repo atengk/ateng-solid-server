@@ -36,9 +36,11 @@ ateng-solid-server/
 
 1. **路由对称（Gateway Symmetry）**：全部管理端接口按服务域挂接 `/admin/auth/**` 与 `/admin/system/**`，前端 `ateng-solid-admin-web` 零修改即可直连单体或网关。
 2. **数据库归属与域内 Flyway**：严禁物理外键（`FOREIGN KEY`）、跨模块 SQL JOIN 与跨模块注入 `*Mapper`；首期 `auth` 零自建持久化表（会话/验证码/防爆破走 Redis，登录日志通过事件或 `RemoteAuditLogService` 交由 `system` 落库）；Flyway 迁移脚本随域内聚于 `ateng-solid-system/src/main/resources/db/migration/system/`，兼容单体单库与微服务分库 + 独立 `flyway.table`。
-3. **跨模块事件与 RPC 桥接**：跨模块异步通知收敛至 `DomainEventPublisher`（单体用 Spring `ApplicationEvent`，Cloud 壳替换为 MQ/异步 RPC）；跨模块同步调用在单体直注 Spring Bean，在 Cloud 壳由薄代理包装 `@DubboService` / `@DubboReference`。
-4. **去 Servlet 耦合与无状态**：Service 与领域层不直接读取 `HttpServletRequest`/`HttpServletResponse`/`SaSession`，统一经 `UserContextHolder`、`TenantContextHolder`、`DataPermissionContextHolder`、`LoginHelper` 获取上下文；进程内不持有验证码/限流/会话可变内存状态，确保与 `ateng-cloud` 上下文透传语义一致。
+3. **跨模块事件、RPC 与运行时 SPI 桥接**：
+   - 跨模块异步通知收敛至 `DomainEventPublisher`（单体用 Spring `ApplicationEvent`，Cloud 壳替换为 MQ/异步 RPC）；跨模块同步调用在单体直注 Spring Bean，在 Cloud 壳由薄代理包装 `@DubboService` / `@DubboReference`；
+   - `ateng-solid-system` 内已沉淀的 3 个运行时 SPI 须在 `Spec 5` 做好 Cloud 态对称闭环：`SolidUserRolePermissionLoader`、`TenantHeaderSwitchValidatorImpl`（协同网关 `ateng-cloud#201`），以及 `@OperateLog` 存储适配 `SolidOperateLogStorageProvider`（需为非 `system` 微服务壳补充事件或 `RemoteAuditLogService` 远端写日志通路，详见 [`ADR-0003`](../adr/0003-monolith-and-cloud-coexistence-architecture.md) §2.4）。
+4. **去 Servlet 耦合、无状态与可观测多壳适配**：Service 与领域层不直接读取 `HttpServletRequest`/`HttpServletResponse`/`SaSession`，统一经 `UserContextHolder`、`TenantContextHolder`、`DataPermissionContextHolder`、`LoginHelper` 获取上下文；进程内不持有验证码/限流/会话可变内存状态，确保与 `ateng-cloud` 上下文透传语义一致。微服务各壳（含无库 `cloud-auth` 与 WebFlux `cloud-gateway`）复用 [`ADR-0007`](../adr/0007-observability-and-actuator-governance.md) 管理面治理基线时须独立裁剪 `readiness` 探针组与安全适配。
 5. **网关 `Same-Token` 与超管切租户协同**：单体设 `ateng.boot.satoken.same-token.enabled=false`；微服务启动壳设为 `true` 配合网关签发 `SA-SAME-TOKEN`（`ateng-cloud#202`），并协同网关集中鉴权与下游 `AtengSaTokenInterceptor` 租户头防重复覆盖（`ateng-cloud#201`）。
-6. **配置收口与 BOM 声明顺序**：业务配置收口于 `io.github.atengk.solid.*.properties.*`（前缀 `ateng.solid.*`，支持 `Duration`/`DataSize`，禁 `@RefreshScope` 与零散 `@Value`，使用 `spring.config.import`）；未来并存 `ateng-cloud-bom` 时，父 `pom.xml` `<dependencyManagement>` 必须将 **`ateng-boot-bom` 声明在 `ateng-cloud-bom` 之前**，防止旧传递基线覆写新版 `ateng-boot`。
+6. **配置收口、BOM 顺序与第 16 条架构守卫**：业务配置收口于 `io.github.atengk.solid.*.properties.*`（前缀 `ateng.solid.*`，支持 `Duration`/`DataSize`，禁 `@RefreshScope` 与零散 `@Value`，使用 `spring.config.import`）；并存 `ateng-cloud-bom` 时，父 `pom.xml` `<dependencyManagement>` 必须将 **`ateng-boot-bom` 声明在 `ateng-cloud-bom` 之前**，并发起前核对 `ateng-cloud:1.1.0` 与 `ateng-boot` 增量版本兼容矩阵、规划 `ArchitectureGuardTest` 第 16 条（禁共享核引入 Cloud/Dubbo 依赖）及多壳发布构建产物矩阵。
 
-> 演进中遇 `ateng-boot` / `ateng-cloud` 能力缺口或缺陷，遵循 [`foundation-first-gate.md`](./foundation-first-gate.md) 先在底座本地改造、提单并提交底座 `dev`，合入 `main` 前锁回正式版。
+> 演进中遇 `ateng-boot` / `ateng-cloud` 能力缺口或缺陷，严格遵循 [`foundation-first-gate.md`](./foundation-first-gate.md)：先向底座提交通用 Issue 并在增强清单登记，**未经用户明确确认严禁直接修改外部底座仓库源码**（获准后方可在底座 `dev` 改造并用 `-SNAPSHOT` 协同验证）；待全阶段收口后统一发布底座正式版并锁回 `main`。

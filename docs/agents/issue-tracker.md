@@ -5,7 +5,7 @@
 > **单仓统一工单 + 多仓物理隔离源码**：
 > - **严禁在 `atengk/ateng-solid-server` 重复创建同类编码实现单**，请统一操作 `-R atengk/ateng-solid` 并在标题使用 `[server]` 前缀；
 > - 后端源码开发、本地测试、Git 提交与推送仍严格在 `ateng-solid-server` 独立仓库内执行；
-> - **底层缺口联动**：开发过程中若发现 `ateng-boot` 或 `ateng-cloud` 存在基础设施能力缺失或缺陷，严禁在本仓编写绕过补丁，须按 [`foundation-first-gate.md`](./foundation-first-gate.md) 向对应底座仓库（`atengk/ateng-boot` / `atengk/ateng-cloud`）提交通用化 Issue 并先在底座 `dev` 完成改造测试；刷新 `-SNAPSHOT` 后本仓可在 `dev` 继续提交与关单，合入 `main` 前锁回正式版。
+> - **底层缺口联动**：开发过程中若发现 `ateng-boot` 或 `ateng-cloud` 存在基础设施能力缺失或缺陷，严禁在本仓编写绕过补丁，须按 [`foundation-first-gate.md`](./foundation-first-gate.md) 先向对应底座仓库（`atengk/ateng-boot` / `atengk/ateng-cloud`）提交通用化 Issue 并在增强清单登记，**未经用户明确确认严禁直接修改外部底座仓库源码**（获准后方可在底座 `dev` 改造验证）；刷新 `-SNAPSHOT` 后本仓可在 `dev` 继续提交与关单，合入 `main` 前统一锁回正式版。
 
 ---
 

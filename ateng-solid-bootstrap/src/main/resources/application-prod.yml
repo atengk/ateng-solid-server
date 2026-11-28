@@ -151,7 +151,8 @@ ateng:
       session-handle-secret: ${SOLID_AUTH_SESSION_HANDLE_SECRET}
     init:
       enabled: ${SOLID_INIT_ENABLED:true}
-      super-admin-password: ${SOLID_INIT_SUPER_ADMIN_PASSWORD}
+      # 首次建号推荐显式注入强口令或留空自动生成一次性 16 位强随机口令；初始化完成后再次重启无需常驻明文环境变量
+      super-admin-password: ${SOLID_INIT_SUPER_ADMIN_PASSWORD:}
 
 logging:
   level:

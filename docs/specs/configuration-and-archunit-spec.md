@@ -7,7 +7,7 @@
 ## 1. Maven POM 依赖边界与版本基线
 
 - **无父 POM 锁死**：根 `pom.xml` 不继承外部 `spring-boot-starter-parent`，通过 `<dependencyManagement>` 顺序导入：
-  1. `io.github.atengk:ateng-boot-bom`（**已锁定正式版 `1.2.0`，含 `#1076~#1080`、`#1093`、`#1094`、`#1134~#1137`、`#1163~#1167` 与 `ateng-boot-flyway`**）；
+  1. `io.github.atengk:ateng-boot-bom`（`1.2.0` 基线；当前 `dev` 分支协同联调 `1.2.1-SNAPSHOT`，覆盖 `B14~B26` 等增量修复）；
   2. `org.springframework.boot:spring-boot-dependencies:3.3.13`。
   > **并存期 BOM 顺序铁律**：未来在同仓新增 `ateng-solid-cloud/*` 启动壳引入 `ateng-cloud-bom` 时，**必须保证 `ateng-boot-bom` 声明在 `ateng-cloud-bom` 之前**，防止传递 BOM 覆写高版本 `ateng-boot`。
 - **5 模块编译期依赖锁死矩阵**：
@@ -27,7 +27,7 @@
 | **`ateng-solid-common`** | `io.github.atengk.solid.common.`<br>`{constant, result, enums, validator, event, spi.auth, properties}` | `SolidConstants`、`CommonBizResultCode`（`100xxx`）、`CommonStatusEnum`、`LogStatusEnum`、`PasswordPolicyValidator`、`DomainEvent` / `DomainEventPublisher` / `SpringDomainEventPublisher` / `LoginAuditEvent`、`AuthGrantHandler` SPI（`AuthGrantCommand`/`AuthenticatedPrincipal`）、`SolidTenantProperties`（`ateng.solid.tenant`） |
 | **`ateng-solid-system-api`** | `io.github.atengk.solid.system.api.`<br>`{result, enums, service, dto, command}` | `SystemResultCode`（`102xxx`）、`DataScopeType`、`MenuTypeEnum`、`ConfigTypeEnum`、`VisibleStatusEnum`、4 个纯 Java `Remote*Service` 契约接口及跨模块裸 DTO/Command（严禁 Web/ORM/RPC 注解与 `Result<T>`） |
 | **`ateng-solid-auth`** | `io.github.atengk.solid.auth.`<br>`{result, properties, controller, service, grant, security, vo, request}` | `AuthResultCode`（`101xxx`）、`SolidAuthProperties`（`ateng.solid.auth`）、`PasswordAuthGrantHandler`、`AuthService`、个人中心与在线会话控制器及认证安全组件（零持久层、零存储依赖） |
-| **`ateng-solid-system`** | `io.github.atengk.solid.system.`<br>`{properties, bootstrap, controller, service, mapper, entity, listener, security, ...}` | `SolidSystemProperties`（`ateng.solid.init`/`user`）、`SuperAdminBootstrapper`（单体与 `cloud-system` 共用）、`Remote*ServiceImpl`、`LoginAuditEventListener`、`DataPermissionHandler`、`TenantHeaderSwitchValidator`、业务控制器/服务/Mapper 与 `db/migration/system/` |
+| **`ateng-solid-system`** | `io.github.atengk.solid.system.`<br>`{properties, bootstrap, controller, service, mapper, entity, listener, security, support, ...}` | `SolidSystemProperties`（`ateng.solid.{init,data-scope,user,cache}`）、`SuperAdminBootstrapper`（单体与 `cloud-system` 共用）、`TenantConfigConsistencyValidator`、`RbacPrivilegeGuard`、`AdaptiveRedisSupport`、`Remote*ServiceImpl`、`LoginAuditEventListener`、`DataPermissionHandler`、`TenantHeaderSwitchValidator`、业务控制器/服务/Mapper 与 `db/migration/system/` |
 | **`ateng-solid-bootstrap`** | `io.github.atengk.solid` | `SolidApplication`、多环境 `application*.yml` 双模基线、离线 `ArchitectureGuardTest`（严禁承载业务 Controller/Service/Mapper） |
 
 ### 扩展模块可插拔装配约定 (`ateng-solid-ext-*` / `ateng-solid-biz-*`)
@@ -50,7 +50,7 @@
 
 ### 生产与本地环境关键变量契约（`${SOLID_*}`）
 - **Fail-Fast 强凭据（`prod` 必填，无默认值）**：`SOLID_DB_HOST`、`SOLID_DB_USERNAME`、`SOLID_DB_PASSWORD`、`SOLID_REDIS_HOST`、`SOLID_REDIS_PASSWORD`、`SOLID_CRYPTO_SECRET_KEY`、`SOLID_AUTH_SESSION_HANDLE_SECRET`、`SOLID_S3_ENDPOINT`、`SOLID_S3_BUCKET`、`SOLID_S3_ACCESS_KEY`、`SOLID_S3_SECRET_KEY`。
-- **可调参数（带安全默认值）**：`SOLID_DB_PORT(3306)`、`SOLID_DB_NAME(ateng_solid)`、`SOLID_DB_USE_SSL(prod:true / local:false)`、`SOLID_DB_ALLOW_PUBLIC_KEY_RETRIEVAL(prod:false / local:true)`、`SOLID_DB_POOL_{MIN,MAX}`、`SOLID_DB_{CONNECTION_TIMEOUT,VALIDATION_TIMEOUT,IDLE_TIMEOUT,MAX_LIFETIME,KEEPALIVE_TIME,LEAK_DETECTION}_MS`、`SOLID_REDIS_{PORT,DATABASE,KEY_PREFIX}`、`SOLID_REDIS_POOL_{MAX,MAX_IDLE,MIN_IDLE,MAX_WAIT}`、`SOLID_REDISSON_{THREADS,NETTY_THREADS,POOL_MAX,POOL_MIN}`、`SOLID_FLYWAY_ENABLED(prod:false / local:true)`、`SOLID_LOG_{FILE_ENABLED,PATH,MAX_FILE_SIZE,MAX_HISTORY,TOTAL_SIZE_CAP}`、`SOLID_ASYNC_CONCURRENCY_LIMIT(256)`、`SOLID_CORS_{ENABLED,ALLOWED_ORIGINS}`、`SOLID_STORAGE_TYPE(s3)`、`SOLID_S3_{PATH_STYLE,AUTO_CREATE_BUCKET}`、`SOLID_MANAGEMENT_PORT(8081)`、`SOLID_MANAGEMENT_ADDRESS(127.0.0.1)`、`SOLID_ACTUATOR_EXPOSURE_INCLUDE(health,info,prometheus,preStop)`、`SOLID_ACTUATOR_SHOW_DETAILS(never)`、`SOLID_ACTUATOR_TOKEN(空)`、`SOLID_ACTUATOR_ALLOWED_IPS(127.0.0.1,::1)`、`SOLID_TRUSTED_PROXIES(空)`、`SOLID_TENANT_ENABLED(false)`、`SOLID_AUTH_CAPTCHA_ENABLED(true)`、`SOLID_INIT_ENABLED(true)`。
+- **可调参数（带安全默认值）**：`SOLID_DB_PORT(3306)`、`SOLID_DB_NAME(ateng_solid)`、`SOLID_DB_USE_SSL(prod:true / local:false)`、`SOLID_DB_ALLOW_PUBLIC_KEY_RETRIEVAL(prod:false / local:true)`、`SOLID_DB_POOL_{MIN,MAX}`、`SOLID_DB_{CONNECTION_TIMEOUT,VALIDATION_TIMEOUT,IDLE_TIMEOUT,MAX_LIFETIME,KEEPALIVE_TIME,LEAK_DETECTION}_MS`、`SOLID_REDIS_{PORT,DATABASE,KEY_PREFIX}`、`SOLID_REDIS_POOL_{MAX,MAX_IDLE,MIN_IDLE,MAX_WAIT}`、`SOLID_REDISSON_{THREADS,NETTY_THREADS,POOL_MAX,POOL_MIN}`、`SOLID_FLYWAY_ENABLED(prod:false / local:true)`、`SOLID_LOG_{FILE_ENABLED,PATH,MAX_FILE_SIZE,MAX_HISTORY,TOTAL_SIZE_CAP}`、`SOLID_ASYNC_CONCURRENCY_LIMIT(256)`、`SOLID_CORS_{ENABLED,ALLOWED_ORIGINS}`、`SOLID_STORAGE_TYPE(s3)`、`SOLID_S3_{PATH_STYLE,AUTO_CREATE_BUCKET}`、`SOLID_MANAGEMENT_PORT(8081)`、`SOLID_MANAGEMENT_ADDRESS(127.0.0.1)`、`SOLID_ACTUATOR_EXPOSURE_INCLUDE(health,info,prometheus,preStop)`、`SOLID_ACTUATOR_SHOW_DETAILS(never)`、`SOLID_ACTUATOR_TOKEN(空)`、`SOLID_ACTUATOR_ALLOWED_IPS(127.0.0.1,::1)`、`SOLID_TRUSTED_PROXIES(空)`、`SOLID_TENANT_ENABLED(false)`、`SOLID_AUTH_CAPTCHA_ENABLED(true)`、`SOLID_INIT_ENABLED(true)`、`SOLID_INIT_SUPER_ADMIN_PASSWORD(空)`。
 
 ### 业务扩展配置收口 (`ateng.solid.*`)
 - 按模块域内聚为 3 个强类型 `@ConfigurationProperties` 类（时间用 `Duration`，容量用 `DataSize`），**严禁**在业务类上使用 `@RefreshScope` 或 `@Value`：
@@ -58,8 +58,8 @@
   2. `SolidAuthProperties`（`auth`，前缀 `ateng.solid.auth`）：`captchaEnabled = true`、`sessionHandleSecret = ""`（单机留空自动随机生成 32B 密钥并 `WARN`，集群须配置统一密钥）；
   3. `SolidSystemProperties`（`system`，前缀 `ateng.solid`）：`init.{enabled = true, superAdminUsername = "superadmin", superAdminNickname = "超级管理员", superAdminPassword = ""}`、`dataScope.maxDeptInSize = 1000`、`user.{importMaxRows = 500, maxConcurrentImports = 2, importFeedbackTtl = Duration.ofMinutes(15)}`、`cache.{dictTtl = Duration.ofMinutes(30), configTtl = Duration.ofMinutes(30)}` 等系统参数。
 
-### 增量底座本地联调与锁版提醒（`Spec 3` / `Spec 4`）
-- `B14~B17`（`ateng-boot#1171`–`#1174`）均已在上游 `dev` 闭环关单；本地开发按 [`foundation-first-gate.md`](../agents/foundation-first-gate.md) SOP 消费 `1.2.1-SNAPSHOT` 验证，**正式提交合入 `dev`/`main` 前须待 `ateng-boot` 发布递进正式版并锁回正式版本号**（`pre-commit` 自动拦截 `-SNAPSHOT`）。
+### 增量底座本地联调与双阶锁版门禁（`ADR-0004`）
+- `B14~B26`（含 `ateng-boot#1171~#1175`、`#1185~#1187` 等）均已在上游 `dev` 闭环关单；本地遵循 [`foundation-first-gate.md`](../agents/foundation-first-gate.md) 双阶门禁：允许在 `dev` 分支消费 `1.2.1-SNAPSHOT` 推进编码、关单与后续 `Spec 5` 微服务协同改造，**向 `main` 合入与正式发版前须待 `ateng-boot` 发布递进正式版并锁回正式版本号**（`pre-commit` / `pre-push` 与 CI 守卫阻塞未锁版合入 `main`）。
 
 ---
 

@@ -8,11 +8,11 @@
 
 - **架构形态**：Java 21 LTS（虚拟线程）+ Spring Boot + `ateng-boot` Maven 多模块（精确依赖版本见 [父 POM](./pom.xml)）。
 - **Maven 模块划分**（`groupId: io.github.atengk`，基础包名 `io.github.atengk.solid.*`）：
-  1. `ateng-solid-common`：全局常量、通用错误码（`100xxx`）、基础枚举与上下文辅助；
-  2. `ateng-solid-system-api`：系统域纯 Java 契约接口（`Remote*Service`）、跨模块 DTO/VO 与错误码（`102xxx`）；
-  3. `ateng-solid-system`：系统管理域实现（`/admin/system/**`、租户与套餐、RBAC + `@DataScope`、组织、枚举/字典、参数、日志与 Flyway 域内迁移脚本）；
-  4. `ateng-solid-auth`：认证与会话中心（`/admin/auth/**`、`loginType="admin"`、验证码、防爆破、在线会话、`101xxx`）；
-  5. `ateng-solid-bootstrap`：单体聚合启动入口、`application*.yml`、跨模块本地事件装配与 ArchUnit 架构守卫。
+  1. [`ateng-solid-common`](./ateng-solid-common/README.md)：全局常量、通用错误码（`100xxx`）、基础枚举与上下文辅助；
+  2. [`ateng-solid-system-api`](./ateng-solid-system-api/README.md)：系统域纯 Java 契约接口（`Remote*Service`）、跨模块 DTO/VO 与错误码（`102xxx`）；
+  3. [`ateng-solid-system`](./ateng-solid-system/README.md)：系统管理域实现（`/admin/system/**`、租户与套餐、RBAC + `@DataScope`、组织、枚举/字典、参数、日志与 Flyway 域内迁移脚本）；
+  4. [`ateng-solid-auth`](./ateng-solid-auth/README.md)：认证与会话中心（`/admin/auth/**`、`loginType="admin"`、验证码、防爆破、在线会话、`101xxx`）；
+  5: [`ateng-solid-bootstrap`](./ateng-solid-bootstrap/README.md)：单体聚合启动入口、`application*.yml`、跨模块本地事件装配、可观测管理面与 ArchUnit 架构守卫。
 
 ---
 
@@ -23,6 +23,9 @@
 3. **组织与 RBAC**：用户（含头像上传与 Excel 导入导出）、角色（含 5 级 `@DataScope` 数据权限）、菜单权限树、部门树、岗位。
 4. **枚举、字典与参数**：上层自建控制器接管静态枚举端点 `/admin/system/enums`（`@SaCheckLogin` 管控）、动态数据字典 `sys_dict` 与系统参数 `sys_config`。
 5. **操作与登录审计**：登录日志、操作审计日志（`@OperateLog` SPI 异步落库）。
+6. **RBAC 防提权与多租户安全加固**：`RbacPrivilegeGuard`、`TenantConfigConsistencyValidator`、确定性 `@FieldEncrypt`（手机号/邮箱）与 `@FieldSensitive` 列表脱敏、`X-Tenant-Id` 与跨租户越权防线。
+7. **两级缓存与自适应 Redis 降级**：激活 Caffeine `TwoLevelCacheManager` 加速权限/字典/参数缓存，支持测试期无 Redis 自动内存降级、分布式导入信号量与 `@RateLimiter` 防刷。
+8. **可观测管理面与双端口治理**：`ateng-solid-bootstrap` 独占接入 `ateng-boot-observability`，落地 `prod` 物理管理端口隔离（`--mgmt-port`）、Liveness/Readiness 分级探针、Prometheus 指标与受控 `/actuator/pre-stop` 优雅排空（详见 [`ADR-0007`](./docs/adr/0007-observability-and-actuator-governance.md)）。
 
 ---
 
@@ -43,14 +46,14 @@ bash scripts/server.sh start --port=8081 --jvm-opts="-Xms512m -Xmx1g" -- --loggi
 bash scripts/server.sh status
 bash scripts/server.sh logs -f
 
-# 2. 独立部署态（将 ateng-solid-bootstrap-*.jar 与 scripts/server.sh 同置运行目录）：
-bash scripts/server.sh start --profile prod --env-file .env.prod --app-args "--spring.main.lazy-initialization=true"
+# 2. 独立部署态（将 ateng-solid-bootstrap-*.jar 与 scripts/server.sh 同置运行目录；prod 默认双端口 --mgmt-port=8081 并以 /actuator/health/readiness 探活）：
+bash scripts/server.sh start --profile prod --mgmt-port=8081 --env-file .env.prod --app-args "--spring.main.lazy-initialization=true"
 bash scripts/server.sh logs --error -n 200
 bash scripts/server.sh stop
 ```
 - **核心规范入口**：
   - 独立开发行为准则：[`AGENTS.md`](./AGENTS.md)
-  - 底层缺口即停工与联调 SOP（同步副本）：[`docs/agents/foundation-first-gate.md`](./docs/agents/foundation-first-gate.md)
+  - 底层零补丁与跨仓联调门禁 SOP（同步副本）：[`docs/agents/foundation-first-gate.md`](./docs/agents/foundation-first-gate.md)
   - 跨端契约规范（同步副本）：[`docs/agents/contracts.md`](./docs/agents/contracts.md)
   - 编码、架构拆解与注释规范（同步副本）：[`docs/agents/coding-standards.md`](./docs/agents/coding-standards.md)
   - 文档 1:1 保真规范（同步副本）：[`docs/agents/documentation-specification.md`](./docs/agents/documentation-specification.md)

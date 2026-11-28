@@ -42,6 +42,19 @@
 - 在引入 `ateng-cloud-bom` 后，父 POM `<dependencyManagement>` **必须保持 `ateng-boot-bom` 在 `ateng-cloud-bom` 之前**；
 - Spec 5 落地后，CI 流水线同时编译并执行单体（`bootstrap`）与微服务（`ateng-solid-cloud/*`）的单元测试与 ArchUnit 架构守卫，从构建层阻止单态漂移或反向污染。
 
+### 2.4 Spec 5 开工前置接缝清单（微服务启动前必查）
+在正式装配 `ateng-solid-cloud/{gateway,auth,system}` 前，以下跨阶段接缝须在 Blueprint ➔ Spec ➔ Ticket 阶段逐项落锤：
+1. **`ateng-solid-system` 中 3 个运行时 SPI 的微服务桥接**：
+   - `SolidUserRolePermissionLoader`（`system` 已实现并内部桥接 `RemotePermissionService`）：在 `cloud-auth` 须通过 `@DubboReference` 订阅系统域能力并保持 `cached/per-request` 语义对称；
+   - `TenantHeaderSwitchValidatorImpl`（超管 `X-Tenant-Id` 切换校验）：须与 `cloud-gateway` 全局拦截器协同 `ateng-cloud#201`，确保网关与下游 `AtengSaTokenInterceptor` 不发生租户上下文重复覆盖或丢失；
+   - `SolidOperateLogStorageProvider`（`@OperateLog` 存储 SPI）：单体直接注入写入 `sys_oper_log`；在微服务拆壳（如 `cloud-auth` 内写操作或后续扩展服务）时，须在 `system-api` 补充 `OperateAuditEvent` / `RemoteAuditLogService#recordOperateLog` 契约并通过事件总线或异步 RPC 归集落库；
+2. **`ADR-0007` 可观测与 `Actuator` 多壳适配**：
+   - `ateng-solid-cloud-auth` 零自建持久化库，不可直接启用 `dynamicDatasource` 就绪探针，须覆盖收敛 `readiness.include` 并保持 `/actuator/**` 安全基线对称；
+   - `ateng-solid-cloud-gateway` 运行于响应式 WebFlux 栈，须核验 `ateng-boot-observability`（若引入）或 Spring Cloud Gateway 的双端口、`stealth-mode` 与 `/actuator/pre-stop` 兼容边界；
+3. **`ArchitectureGuardTest` 第 16 条硬守卫规划**：在 `Spec 5` 新增第 16 条 ArchUnit 规则，阻断共享业务核（`common`/`system-api`/`system`/`auth`）任何代码引入 `org.springframework.cloud..`、`org.apache.dubbo..` 或 `io.github.atengk.cloud..`；
+4. **CI 与多启动壳产物矩阵规划**：扩展发布与验证工作流（`.github/workflows/release.yml` 等），由单体单一产物升级为同步产出 `ateng-solid-bootstrap` 与 `ateng-solid-cloud-{gateway,auth,system}` 多态构建产物；
+5. **底座 BOM 与快照兼容核对**：开工前复核 `ateng-cloud:1.1.0` 与当前 `ateng-boot:1.2.1-SNAPSHOT`（含 `B14~B26`）的传递依赖兼容矩阵；按既定发布策略，允许 `Spec 5` 继续于 `dev` 协同底座 `-SNAPSHOT` 联调改造，待全阶段通过后统一发布底座正式版并合并 `main`。
+
 ---
 
 ## 3. 后果与权衡

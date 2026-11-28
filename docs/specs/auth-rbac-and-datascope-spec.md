@@ -42,7 +42,7 @@
   - 输出编码：`Base64.getUrlEncoder().withoutPadding().encodeToString(iv || cipherAndTag)`（约 86 位纯 `[A-Za-z0-9_-]` 字符，天然适配 URL Path）；
 - **密钥治理与集群一致性**：
   - 密钥来源：`SolidAuthProperties.sessionHandleSecret`（配置键 `ateng.solid.auth.session-handle-secret`，经 SHA-256 派生固定 32 字节 AES-256 密钥）；
-  - `application-local.example.yml` 声明 `${SOLID_AUTH_SESSION_HANDLE_SECRET:YOUR_32_CHAR_SESSION_SECRET}`，`application-test.yml` 配置测试桩密钥；
+  - `application-local.example.yml` 声明 `${SOLID_AUTH_SESSION_HANDLE_SECRET:YOUR_SESSION_HANDLE_SECRET}`，`application-test.yml` 配置测试桩密钥；
   - 若运行期配置留空，构造期自动通过 `SecureRandom` 生成进程内一次性随机 32 字节密钥并打印 `WARN` 日志提醒“多实例集群部署必须配置统一 `session-handle-secret`”，**严禁硬编码固定默认密钥**；
 - **`tokenMask` 与强退报错口径**：
   - `tokenMask`：前 6 位 + `****` + 后 4 位（如 `f9a2c1****7e3b`；长度 `<= 10` 时保底前 2 位 + `****` + 后 2 位）；
@@ -55,7 +55,7 @@
   - `enabled`（默认 `true`，生产完成初始化后可手动关闭）；
   - `super-admin-username`（默认 `"superadmin"`）；
   - `super-admin-nickname`（默认 `"超级管理员"`）；
-  - `super-admin-password`（默认 `""`；`application-test.yml` 固定测试桩口令 `"Ateng@Test2026"`，并同步开启 `spring.flyway.enabled: true` 供集成测试自动初始化表与种子）；
+  - `super-admin-password`（默认 `""`；`application-prod.yml` 声明 `${SOLID_INIT_SUPER_ADMIN_PASSWORD:}` 允许留空随机引导；`application-test.yml` 固定测试桩口令 `"Ateng@Test2026"`，并同步开启 `spring.flyway.enabled: true` 供集成测试自动初始化表与种子）；
 - **多实例并发幂等双防线**：
   1. 在 `TenantContextHolder.runWithTenant("0", ...)` 下检查租户 `0` 是否已存在任一绑定 `super_admin` 角色（`role_id = 1`）的未软删用户（按角色而非固定用户名判定，防止管理员改名后重复建号）；已存在则记 `INFO` 日志直接跳过；
   2. 若 Redis 可用（经上层可选自适应门面调用 `DistributedLockTemplate`），前置 **`tryExecute("init:super-admin", Duration.ofSeconds(5), ...)`** 分布式互斥锁（受 `ateng.boot.redis.key-prefix` 托管为默认 `solid:lock:init:super-admin`，Redisson 看门狗自动续期）消除多节点冷启动抢跑与重复 PBKDF2 计算，锁内二次检查；无 Redis 环境平滑直通；
@@ -81,13 +81,13 @@
    - 仅当开启多租户且当前登录态同时满足 `LoginHelper.getTenantId("admin").equals("0")` 与角色 **`super_admin`** 时，允许通过 `X-Tenant-Id` 切换到目标有效租户视角；`TenantHeaderSwitchValidator`（运行于 `AtengSaTokenInterceptor` 内部）调用带缓存的 `RemoteTenantService.isTenantAvailable(targetTenantId)` 校验目标租户，若目标不存在、已停用或已过 `expire_time`，直接抛出 **`CommonBizResultCode(100002, "目标租户不存在、已停用或已过期，无法切换")`**（**绝不注销超管自身 `"0"` 号租户会话**），前端捕获 `100002` 后自动将 `TenantManager` 复位回 `"0"` 并刷新工作台；
    - 请求结束后在拦截器 `afterCompletion` 中强制清理 `TenantContextHolder`、`UserContextHolder` 与 `DataPermissionContextHolder`。
 4. **租户停用 / 自然过期运行时拦截（`TenantAvailabilityInterceptor` + 零漂移状态缓存）**：
-   - **条件注册与拦截顺序**：归属 `ateng-solid-auth`（`io.github.atengk.solid.auth.security.TenantAvailabilityInterceptor`），通过 `@ConditionalOnProperty(prefix = "ateng.solid.tenant", name = "enabled", havingValue = "true")` 条件装配（单租户模式零开销），注册于 Spring MVC **`order = 10`**（严格位于 `AtengSaTokenInterceptor` 默认 `order = 0` 之后），拦截 `/admin/**` 并排除 `/admin/auth/captcha`、`/admin/auth/login`、`/admin/auth/logout`；
+   - **常驻注册与拦截顺序**：归属 `ateng-solid-auth`（`io.github.atengk.solid.auth.security.TenantAvailabilityInterceptor`），通过 `AuthWebMvcConfigurer` **无条件常驻装配**于 Spring MVC **`order = 10`**（严格位于 `AtengSaTokenInterceptor` 默认 `order = 0` 之后），拦截 `/admin/**` 并排除 `/admin/auth/captcha`、`/admin/auth/login`、`/admin/auth/logout`；
    - **零漂移 `TenantAuthDTO` 状态缓存（归属 `ateng-solid-system` `RemoteTenantService` 内部）**：
      - 缓存键：领域相对键 `tenant:status:{tenantId}`（经 `ateng.boot.redis.key-prefix` 托管后默认物理键 `solid:tenant:status:{tenantId}`），TTL 由 `SolidTenantProperties.statusCacheTtl` 控制（默认 `60s`）；
      - 缓存值：`TenantAuthDTO` 紧凑 JSON（含 `status`、`expireTime`、不存在标记哨兵防穿透），**严禁仅缓存易漂移的布尔值**；启用 Redis 时经上层自适应门面直连纯 L2 **`RedisCacheTemplate`**（Redisson 防击穿互斥锁 + DCL + `NULL_SENTINEL` + Jitter TTL，彻底避免 Pub/Sub 抖动引发 L1 滞后），无 Redis 时平滑降级至本地有界缓存（上限 `10_000`）；
      - **0 秒自然过期截断**：每次校验命中缓存后在内存中实时比对 `status == 0 && (expireTime == null || expireTime.isAfter(LocalDateTime.now()))`；
      - **写路径即时驱逐**：`SysTenantService` 执行修改租户、停用租户或删除租户时，在事务提交后立即驱逐 `tenant:status:{tenantId}` 缓存键（停用与删除同步强退租户全员在线会话）；
-   - **普通租户拦截与会话清理**：当登录态非匿名、会话归属租户 `ownerTenantId != "0"` 且 `RemoteTenantService.isTenantAvailable(tenantId)` 返回 `false` 时，`TenantAvailabilityInterceptor` 立即调用 `LoginHelper.logout("admin")` 销毁当前失效令牌，并抛出 **`AuthResultCode(101005, "当前所属租户已停用或已过期，请联系平台管理员")`**；前端响应拦截器将已登录态收到的 `101005` 视同会话终止，清空 `AuthManager`、将 `TenantManager` 复位为 `"0"`、提示明确原因并跳转 `/login`。
+   - **普通租户及切回单租户残留会话拦截**：当登录态非匿名、会话归属租户 `ownerTenantId != "0"` 时，若 `ateng.solid.tenant.enabled = false`（从多租户切回单租户关闭态后的历史残留会话）或开启多租户时 `RemoteTenantService.isTenantAvailable(tenantId)` 返回 `false`，`TenantAvailabilityInterceptor` 均立即调用 `LoginHelper.logout("admin")` 销毁当前失效令牌，并抛出 **`AuthResultCode(101005, "当前所属租户已停用或已过期，请联系平台管理员")`**；前端响应拦截器将已登录态收到的 `101005` 视同会话终止，清空 `AuthManager`、将 `TenantManager` 复位为 `"0"`、提示明确原因并跳转 `/login`。
 
 ---
 
@@ -97,7 +97,7 @@
    - 权限码采用三段式 `<域>:<资源>:<动作>`（例如 `system:user:list`、`system:user:create`、`system:user:update`、`system:user:delete`、`system:user:export`、`system:user:import`）；
    - 平台超管角色编码唯一收敛为 **`super_admin`**（全权限 `*:*:*`），**必须在 `application.yml` 显式配置 `ateng.boot.satoken.super-admin-roles: ["super_admin"]`** 覆盖底座默认 `["admin", "super_admin"]`；普通租户创建角色时校验禁止使用 `super_admin` 或 `admin` 保留编码。
    - **注解路由红线**：`ateng-boot:1.2.0` 已就绪 `#1076` 与 `#1077`（自动 `StpLogic` 路由与 `DataPermissionContextHolder` 自动同步），控制器直接采用标准 `@SaCheckPermission` / `@SaCheckRole`，严禁重复手写 `type = "admin"` 或自写补偿拦截器。
-   - **权限缓存刷新与多租户隔离策略**：全局开启 `ateng.boot.redis.two-level.enabled=true` 后，`PermissionCacheService`（`ateng-boot:1.2.0` 已支持三参隔离与复合 `loginId` 解析，`#1093`/`#1164`）自动委派给 `TwoLevelCacheManager`（空间 `satoken:permissions` + `Caffeine` L1 + Redis Pub/Sub 集群失效广播），无 Redis 环境自动退化为单机有界内存适配；所有缓存清理与会话强退副作用必须通过 **`TransactionUtil.executeAfterCommit`** 挂接在事务提交后执行（完整失效与强退矩阵见 [`system-engines-and-testing-spec.md`](./system-engines-and-testing-spec.md) §1）——用户角色变更、停删必须调用 3 参 **`clearUserCache("admin", tenantId, userId)`**；角色菜单变更必须调用 3 参 **`clearRoleCache("admin", tenantId, roleKey)`**；菜单或租户套餐变更在事务内联动裁剪越界 `sys_role_menu` 并调用 `clearAll()`。
+   - **权限缓存刷新与 RBAC 防提权守卫（`RbacPrivilegeGuard`）**：全局开启 `ateng.boot.redis.two-level.enabled=true` 后，`PermissionCacheService`（`ateng-boot:1.2.0` 已支持三参隔离与复合 `loginId` 解析，`#1093`/`#1164`）自动委派给 `TwoLevelCacheManager`（空间 `satoken:permissions` + `Caffeine` L1 + Redis Pub/Sub 集群失效广播），无 Redis 环境自动退化为单机有界内存适配；所有缓存清理与会话强退副作用必须通过 **`TransactionUtil.executeAfterCommit`** 挂接在事务提交后执行（完整失效与强退矩阵见 [`system-engines-and-testing-spec.md`](./system-engines-and-testing-spec.md) §1）——用户角色变更、停删必须调用 3 参 **`clearUserCache("admin", tenantId, userId)`**；角色菜单/状态/`roleKey` 变更必须通过 `RoleAuthorizationSupport#evictRoleAndUserCacheAfterCommit` 同时清理 **`clearRoleCache`** 与受影响用户的 **`user-roles`** 缓存；菜单或租户套餐变更在事务内联动裁剪越界 `sys_role_menu` 并调用 `clearAll()`。同时，`RbacPrivilegeGuard` 在角色授菜单与用户赋角色入口强制执行子集防提权、同租户归属及 `super_admin` / 自身保护。
 2. **5 级 `@DataScope` 数据权限规范（`SolidDataPermissionHandler` 工程终稿）**：
    - 底座 `ateng-boot-mybatis-plus` 提供 `@DataScope` 注解与四参 SPI `DataPermissionHandler#getSqlSegment(Table table, Expression where, String mappedStatementId, DataScope dataScope)`（`#1173` 已默认开启 `failure-strategy: DENY_ALL`、自动对顶层/嵌套 `OrExpression` 写时复制加括号，并原样透传 `BusinessException`）；**`DataScopeType` 枚举归属 `ateng-solid-system-api`**（实现 `IBaseEnum<Integer>`），由 `ateng-solid-system` 注册 `SolidDataPermissionHandler` Bean；
    - **防递归自拦截与实时查询**：处理器内部查询当前用户实时 `sys_user.dept_id`（主键单点查询，避免管理员调动部门后会话缓存滞后）、当前租户有效角色（`status = 0 AND deleted = 0`）、`sys_role_dept` 与 `sys_dept` 子树时，**必须包裹在 `DataPermissionContextHolder.runWithoutPermission(...)` 内**；
@@ -118,4 +118,4 @@
 - **操作审计（`@OperateLog` 与异步安全 `SolidOperateLogStorageProvider`）**：
   - Controller 写操作方法标配 `@OperateLog(module = "...", type = OperateTypeEnum.XXX, description = "...")`（注意属性名为 `type`）；`OperateLogAspect` 在请求线程同步采集并填充 `OperateLogModel` 的 `traceId`/`tenantId`/`userId`/`userAgent`/`browser`/`os`/`description`，随后投递至异步 `taskExecutor` 调用 `OperateLogStorageProvider#store(logModel)`；
   - **异步线程补全真实 `userName` 硬约定**：因异步线程中 `SaTokenContext` 与 HTTP 请求已脱离，**严禁在 `store(logModel)` 中调用 `LoginHelper.getLoginUser()`**！正确实现是在 `SolidOperateLogStorageProvider#store` 中提取 `logModel.getTenantId()` 与 `logModel.getUserId()`，在 `TenantContextHolder.runWithTenant(..., () -> DataPermissionContextHolder.runWithoutPermission(...))` 内执行主键单点查询 `sysUserMapper.selectUsernameById(userId)` 补全真实账号名（查无则回退 `logModel.getUserName()`）并落库 `sys_oper_log`（含 `description`、`browser`、`os`、`operate_type`）。
-- **静态枚举端点（上层自主接管）**：配置 `ateng.boot.web.enum.enabled=true`、`endpoint-enabled=false`（`ateng-boot#1094`）、`scan-packages=[io.github.atengk.solid, io.github.atengk.boot.web.enums]`（兼收业务枚举与底座 `OperateTypeEnum` 映射为 `operateType`），在 `ateng-solid-system` 自建 `SysEnumController` 注入 `EnumDictionaryRegistry` 暴露 `/admin/system/enums`（全量/单个/批量），标注 `@SaCheckLogin` 强制受管理端登录态保护并可按需扩展细粒度权限与租户过滤。
+- **静态枚举端点（上层自主接管）**：配置 `ateng.boot.web.enum.enabled=true`、`endpoint-enabled=false`（`ateng-boot#1094`）、`scan-packages=[io.github.atengk.solid, io.github.atengk.boot.core.audit]`（兼收业务枚举与底座 `OperateTypeEnum` 映射为 `operateType`），在 `ateng-solid-system` 自建 `SysEnumController` 注入 `EnumDictionaryRegistry` 暴露 `/admin/system/enums`（全量/单个/批量），标注 `@SaCheckLogin` 强制受管理端登录态保护并可按需扩展细粒度权限与租户过滤。

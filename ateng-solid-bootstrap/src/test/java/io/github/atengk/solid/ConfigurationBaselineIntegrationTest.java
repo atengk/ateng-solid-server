@@ -326,7 +326,7 @@ class ConfigurationBaselineIntegrationTest {
         assertThat(prod.getProperty("ateng.boot.web.trusted-proxies")).isEqualTo("${SOLID_TRUSTED_PROXIES:}");
         assertThat(prod.getProperty("ateng.boot.mybatis-plus.tenant.enabled")).isEqualTo("${SOLID_TENANT_ENABLED:false}");
         assertThat(prod.getProperty("ateng.solid.init.super-admin-password"))
-                .isEqualTo("${SOLID_INIT_SUPER_ADMIN_PASSWORD}");
+                .isEqualTo("${SOLID_INIT_SUPER_ADMIN_PASSWORD:}");
         assertThat(prod.getProperty("management.server.port")).isEqualTo("${SOLID_MANAGEMENT_PORT:8081}");
         assertThat(prod.getProperty("management.server.address")).isEqualTo("${SOLID_MANAGEMENT_ADDRESS:127.0.0.1}");
         assertThat(prod.getProperty("management.endpoints.web.exposure.include"))

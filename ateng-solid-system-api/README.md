@@ -13,17 +13,17 @@
 | 系统枚举 | [`MenuTypeEnum`](./src/main/java/io/github/atengk/solid/system/api/enums/MenuTypeEnum.java) | `"M"` 目录 / `"C"` 菜单 / `"F"` 按钮 | 枚举别名 `menuType` | [`ConfigurationBaselineIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
 | 系统枚举 | [`ConfigTypeEnum`](./src/main/java/io/github/atengk/solid/system/api/enums/ConfigTypeEnum.java) | `"Y"` 系统内置 / `"N"` 业务自建 | 枚举别名 `configType` | [`ConfigurationBaselineIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
 | 系统枚举 | [`VisibleStatusEnum`](./src/main/java/io/github/atengk/solid/system/api/enums/VisibleStatusEnum.java) | `0` 显示 / `1` 隐藏 | 枚举别名 `visibleStatus` | [`ConfigurationBaselineIntegrationTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ConfigurationBaselineIntegrationTest.java) |
-| 用户契约 | [`RemoteUserService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteUserService.java) | 8 方法（认证查询、资料读写、头像、改密/平滑升级哈希） | 显式 `tenantId`；单查返 `null` 或抛 `102001`；禁明文密文回流 | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
-| 租户契约 | [`RemoteTenantService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteTenantService.java) | 3 方法（按编码/主键查租户、可用性校验） | 返回 `TenantAuthDTO`（含 `isAvailableAt`）或 `boolean` | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
-| 权限契约 | [`RemotePermissionService`](./src/main/java/io/github/atengk/solid/system/api/service/RemotePermissionService.java) | 4 方法（角色、角色权限、直赋权限、动态路由树） | 集合查询无匹配保底返回空集合 `[]` | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
-| 审计契约 | [`RemoteAuditLogService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteAuditLogService.java) | 1 方法（`recordLoginAudit`） | 消费 `LoginAuditCommand`（含 `action`），幂等写日志并仅在登录成功时回写轨迹 | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java) |
+| 用户契约 | [`RemoteUserService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteUserService.java) | 8 方法（认证查询、资料读写、头像、改密/平滑升级哈希） | 显式 `tenantId`；单查返 `null` 或抛 `102001`；禁明文密文回流 | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java)<br/>[`SystemApiContractTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SystemApiContractTest.java) |
+| 租户契约 | [`RemoteTenantService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteTenantService.java) | 3 方法（按编码/主键查租户、可用性校验） | 返回 `TenantAuthDTO`（含 `isAvailableAt`）或 `boolean` | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java)<br/>[`SystemApiContractTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SystemApiContractTest.java) |
+| 权限契约 | [`RemotePermissionService`](./src/main/java/io/github/atengk/solid/system/api/service/RemotePermissionService.java) | 4 方法（角色、角色权限、直赋权限、动态路由树） | 集合查询无匹配保底返回空集合 `[]` | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java)<br/>[`SystemApiContractTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SystemApiContractTest.java) |
+| 审计契约 | [`RemoteAuditLogService`](./src/main/java/io/github/atengk/solid/system/api/service/RemoteAuditLogService.java) | 1 方法（`recordLoginAudit`） | 消费 `LoginAuditCommand`（含 `action`），幂等写日志并仅在登录成功时回写轨迹 | [`ArchitectureGuardTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/ArchitectureGuardTest.java)<br/>[`SystemApiContractTest`](../ateng-solid-bootstrap/src/test/java/io/github/atengk/solid/SystemApiContractTest.java) |
 
 ---
 
 ## 1. 模块定位与架构纯净度约束
 
 - **编译与字节码纯净**：仅依赖 `ateng-solid-common` 与 `jakarta.validation-api`；`ArchitectureGuardTest` 规则 2 与规则 8 强制拦截任何向本模块引入 `org.springframework.web..`、`com.baomidou..`、`org.springframework.data.redis..`、`org.springframework.cloud.openfeign..`、`org.apache.dubbo..`、`jakarta.servlet..` 或 `io.github.atengk.boot.core.model.Result` 的代码。
-- **裸返回值 + 异常语义**：全部 `Remote*Service` 方法直接返回裸 DTO / `List` / `boolean`（严禁返回 `` `Result<T>` ``），失败直接 `throw new BusinessException(...)`，确保单体 Spring Bean 直调与 Dubbo/Feign 消费行为完全对称。
+- **裸返回值 + 异常语义**：全部 `Remote*Service` 方法直接返回裸 DTO / `List` / `boolean`（严禁返回 `Result<T>`），失败直接 `throw new BusinessException(...)`，确保单体 Spring Bean 直调与 Dubbo/Feign 消费行为完全对称。
 
 ```xml
 <dependency>
@@ -65,10 +65,10 @@ flowchart LR
 | `RemoteTenantService` | `TenantAuthDTO getTenantByCode(String tenantCode)` | 不存在返回 `null` |
 | `RemoteTenantService` | `TenantAuthDTO getTenantById(Long tenantId)` | 不存在返回 `null` |
 | `RemoteTenantService` | `boolean isTenantAvailable(Long tenantId)` | 校验存在、未删、`status == 0` 且未过期 |
-| `RemotePermissionService` | ``List<String> getRoleKeysByUserId(Long tenantId, Long userId)`` | 无匹配返回空集合 `Collections.emptyList()` |
-| `RemotePermissionService` | ``List<String> getPermissionsByRoleKey(Long tenantId, String roleKey)`` | 无匹配返回空集合 |
-| `RemotePermissionService` | ``List<String> getDirectPermissionsByUserId(Long tenantId, Long userId)`` | 无匹配返回空集合 |
-| `RemotePermissionService` | ``List<RouteMenuDTO> getRouteMenusByUserId(Long ownerTenantId, Long effectiveTenantId, Long userId, boolean superAdmin, boolean tenantEnabled)`` | 返回完成 `M`/`C` 树组装、停用与 `platform_only` 剪枝的菜单树 |
+| `RemotePermissionService` | `List<String> getRoleKeysByUserId(Long tenantId, Long userId)` | 无匹配返回空集合 `Collections.emptyList()` |
+| `RemotePermissionService` | `List<String> getPermissionsByRoleKey(Long tenantId, String roleKey)` | 无匹配返回空集合 |
+| `RemotePermissionService` | `List<String> getDirectPermissionsByUserId(Long tenantId, Long userId)` | 无匹配返回空集合 |
+| `RemotePermissionService` | `List<RouteMenuDTO> getRouteMenusByUserId(Long ownerTenantId, Long effectiveTenantId, Long userId, boolean superAdmin, boolean tenantEnabled)` | 返回完成 `M`/`C` 树组装、停用与 `platform_only` 剪枝的菜单树 |
 | `RemoteAuditLogService` | `void recordLoginAudit(LoginAuditCommand cmd)` | 幂等落库 `sys_login_log`；仅 `action != "LOGOUT"` 且 `status == 0 && userId != null` 回写最近登录态 |
 
 3. **边界防御**：

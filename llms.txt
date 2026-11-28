@@ -1,6 +1,6 @@
 # ateng-solid-server
 
-> `ateng-solid` 全端框架的后端核心服务（Java 21 虚拟线程 + Spring Boot 3.3 + `ateng-boot`），采用“5 模块单体先行稳固 + `ateng-cloud` 微服务长期同源共存”双装配架构，对外以对称前缀 `/admin/**` 提供强类型契约。
+> `ateng-solid` 全端框架的后端核心服务（Java 21 虚拟线程 + Spring Boot + `ateng-boot`），采用“5 模块单体先行稳固 + `ateng-cloud` 微服务长期同源共存”双装配架构，对外以对称前缀 `/admin/**` 提供强类型契约。
 
 ## AI 编程助手必读约定 (Instructions for AI Agents)
 
@@ -9,7 +9,7 @@
   - `ateng-solid-system-api` 保持纯 Java 契约（零 Web / MyBatis-Plus / Redis / Feign / Dubbo 注解与 Entity），`Remote*Service` 统一返回裸 DTO/VO（禁 `Result<T>`）并在异常时抛 `BusinessException`；
   - `ateng-solid-auth` 仅依赖 `common` 与 `system-api`，严禁依赖 `system` 实现包；
   - Controller 显式返回 `Result<T>` / `PageResult<VO>` 并严禁泄漏 ORM `Entity`；全部业务注入强制构造器注入（`@RequiredArgsConstructor`）；Flyway 脚本随所属领域置入模块资源目录（如 `ateng-solid-system/src/main/resources/db/migration/system/`）。
-- **底座优先与 1:1 文档沉淀**：编码前核对 [底层缺口即停工与联调 SOP](./docs/agents/foundation-first-gate.md)；完成功能并通过 `mvn clean test -B -T 1C -nsu` 后，按 [文档 1:1 保真与模块规范](./docs/agents/documentation-specification.md) 逆向更新对应模块 `README.md`、Spec、`CONTEXT.md` 与本索引。
+- **底座优先与 1:1 文档沉淀**：编码前核对 [底层零补丁与跨仓联调门禁 SOP](./docs/agents/foundation-first-gate.md)；完成功能并通过 `mvn clean test -B -T 1C -nsu` 后，按 [文档 1:1 保真与模块规范](./docs/agents/documentation-specification.md) 逆向更新对应模块 `README.md`、Spec、`CONTEXT.md` 与本索引。
 
 ## 全局规范与架构决策
 
@@ -20,7 +20,7 @@
 - [同源双装配守则](./docs/agents/cloud-readiness.md): `bootstrap` 与 `ateng-solid-cloud/*` 目录拓扑与六大并存接缝
 - [跨端通信与数据契约](./docs/agents/contracts.md): 统一响应、错误码段、`tenant_id BIGINT` 与三段式权限码
 - [编码规范、架构拆解与注释准则](./docs/agents/coding-standards.md): 复用提取阶梯、大类拆分线、设计模式选型、事务防 N+1 与文档/逻辑注释规范
-- [底层缺口即停工与联调 SOP](./docs/agents/foundation-first-gate.md): 停工门禁与跨仓本地 `-SNAPSHOT` 联调 SOP
+- [底层零补丁与跨仓联调门禁 SOP](./docs/agents/foundation-first-gate.md): 零补丁停工门禁、提单先行与跨仓 `-SNAPSHOT` 联调 SOP
 - [文档 1:1 保真与模块规范](./docs/agents/documentation-specification.md): 应用五维文档结构与 10 项自检清单
 
 ## 详细设计规格 (Specs)

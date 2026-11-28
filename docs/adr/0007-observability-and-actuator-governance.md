@@ -10,7 +10,7 @@
 
 ## 1. 背景与前提约束
 
-在 [ADR-0005](./0005-multi-env-configuration-and-pool-baseline.md) 与 [ADR-0006](../../../docs/adr/0006-stage1-minimal-stack-and-object-mapping.md) 落地后，后端首期已保持极简依赖完成核心业务闭环。随着容器化 Kubernetes 探针探测、Prometheus 指标采集、`preStop` 流量排空以及 [`scripts/server.sh`](../../scripts/server.sh) 就绪判定等运维治理诉求明确，需要在不破坏 5 模块物理边界的前提下引入可观测管理面。
+在 [ADR-0005](./0005-multi-env-configuration-and-pool-baseline.md) 与 [工作区根仓 ADR-0006（首期极简技术栈）](https://github.com/atengk/ateng-solid/blob/dev/docs/adr/0006-stage1-minimal-stack-and-object-mapping.md) 落地后，后端首期已保持极简依赖完成核心业务闭环。随着容器化 Kubernetes 探针探测、Prometheus 指标采集、`preStop` 流量排空以及 [`scripts/server.sh`](../../scripts/server.sh) 就绪判定等运维治理诉求明确，需要在不破坏 5 模块物理边界的前提下引入可观测管理面。
 
 正式接入前，按“底层零补丁（Foundation-First）”原则优先在 `ateng-boot` 上游 `dev` 根治三项前置问题（本地 `1.2.1-SNAPSHOT` 联调消费，合入 `main` 前统一锁回正式版）：
 1. **`[B24]` (`ateng-boot#1185`)**：修复 `AtengHealthAutoConfiguration` 与 `AtengStorageAutoConfiguration` 同名 `storageHealthIndicator` 自动装配顺序竞态，保证防假死异步版存储探针可靠胜出；
@@ -69,4 +69,4 @@
 ## 4. 后果与演进边界
 
 - **正面收益**：全链路观测指标、构建指纹、K8s 探针分级、`preStop` 排空与物理双端口安全防御开箱即用；离线 `test` 套件含单双端口全流程端到端回归覆盖。
-- **代价与约束**：`dev` 阶段消费 `ateng-boot` `1.2.1-SNAPSHOT` 联调；`ateng-solid-server` 合入 `main` 与正式发版前，须待 `ateng-boot` 发布含 `B24`/`B25` 的递进正式版并锁回正式版本号。
+- **代价与约束**：`dev` 阶段消费 `ateng-boot` `1.2.1-SNAPSHOT` 联调；`ateng-solid-server` 合入 `main` 与正式发版前，须待 `ateng-boot` 发布含 `B24`/`B25`/`B26` 的递进正式版并锁回正式版本号。后续 `Spec 5` 开启 `ateng-solid-cloud/*` 微服务启动壳时的 Gateway WebFlux 适配与 `cloud-auth` 无库探针收敛见 [`ADR-0003`](./0003-monolith-and-cloud-coexistence-architecture.md) §2.4。

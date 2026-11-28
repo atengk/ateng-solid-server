@@ -32,7 +32,7 @@
             <artifactId>ateng-boot-flyway</artifactId>
         </dependency>
 
-        <!-- 可观测与 Actuator 管理面底座（仅限启动宿主装配，业务模块零编译依赖；dev 消费 1.2.1-SNAPSHOT 含 B24/B25，合入 main 前锁回正式版） -->
+        <!-- 可观测与 Actuator 管理面底座（仅限启动宿主装配，业务模块零编译依赖；dev 消费 1.2.1-SNAPSHOT 含 B24/B25/B26，合入 main 前锁回正式版） -->
         <dependency>
             <groupId>io.github.atengk</groupId>
             <artifactId>ateng-boot-observability</artifactId>
